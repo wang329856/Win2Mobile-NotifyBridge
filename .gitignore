@@ -1,0 +1,40 @@
+# Build outputs
+dist/
+**/bin/
+**/obj/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Flutter
+**/android/.gradle/
+**/android/app/build/
+**/android/build/
+**/.dart_tool/
+**/.packages
+**/.pub/
+**/build/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
+logs/
+*.log
+
+# Claude
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store
