@@ -10,12 +10,15 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import okhttp3.*
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
+import java.time.Instant
 
 class BridgeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val app get() = application as BridgeApplication
     private val dao get() = app.db.dao()
     private val restarts = Channel<Unit>(Channel.CONFLATED)
+    private val newSessionRequested = AtomicBoolean(false)
     private var coordinator: Job? = null
     private val network get() = getSystemService(ConnectivityManager::class.java)
     private val notices get() = getSystemService(NotificationManager::class.java)
@@ -37,6 +40,7 @@ class BridgeService : Service() {
                     // One owner performs cancel AND join before creating any replacement connections.
                     receivers?.cancelAndJoin()
                     receivers = null
+                    if (newSessionRequested.getAndSet(false)) { dao.beginSession(); notices.cancelAll(); notices.notify(1, statusNotification("本次接收已开始 · 等待连接")) }
                     if (!app.preferences.getBoolean("running", false)) {
                         dao.computers().forEach { dao.state(it.serverId, "已停止") }
                         stopSelf()
@@ -70,6 +74,7 @@ class BridgeService : Service() {
             restart()
             return START_NOT_STICKY
         }
+        if (intent?.action == "BEGIN") newSessionRequested.set(true)
         if (!ready) return START_NOT_STICKY
         if (!app.preferences.getBoolean("running", false)) { stopSelf(); return START_NOT_STICKY }
         restart()
@@ -77,6 +82,7 @@ class BridgeService : Service() {
     }
     private fun restart() { restarts.trySend(Unit) }
     private suspend fun receive(id: String) {
+        if (dao.computer(id)?.remoteEnabled == true) { receiveNtfy(id); return }
         var retries = 0
         try {
             while (currentCoroutineContext().isActive) {
@@ -115,7 +121,7 @@ class BridgeService : Service() {
                             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                                 frames.close(StreamFailures.closed(code))
                             }
-                        })
+                        }, liveOnly = computer.sessionPending)
                         val watchdog = launch {
                             while (isActive) {
                                 delay(10000)
@@ -132,10 +138,16 @@ class BridgeService : Service() {
                                 when (frame.kind) {
                                     "hello" -> {
                                         retries = 0
+                                        dao.sessionConnected(id, Instant.now().toString())
+                                        dao.alignCursor(id, state.resumeCursor)
                                         // Repair an earlier failed ACK even if no new events arrive.
                                         client.ack(dao.computer(id)?.cursor ?: error("电脑已移除"), token)
                                         dao.state(id, "已连接")
                                         notices.notify(1, statusNotification("后台接收已开启 · 具体连接见电脑页"))
+                                    }
+                                    "checkpoint" -> {
+                                        dao.alignCursor(id, state.resumeCursor)
+                                        client.ack(dao.computer(id)?.cursor ?: error("电脑已移除"), token)
                                     }
                                     "event" -> {
                                         val event = frame.event!!
@@ -176,6 +188,40 @@ class BridgeService : Service() {
             }
         }
     }
+    private suspend fun receiveNtfy(id: String) {
+        var retries = 0
+        try {
+            while (currentCoroutineContext().isActive) {
+                val computer = dao.computer(id) ?: return
+                if (!computer.enabled || !computer.remoteEnabled) return
+                val credentials = runCatching { app.tokens.get(id + ":ntfy")?.let { wireJson.decodeFromString<NtfyCredentials>(it).validate() } }.getOrNull()
+                if (credentials == null) { dao.state(id, "需要重新配对", "中转凭据不可用，请在电脑开启跨网络功能后重新扫码"); return }
+                val client = NtfyClient(credentials)
+                val assembler = NtfyAssembler(id, computer.deviceId, credentials)
+                val connectedAt = Instant.now()
+                try {
+                    dao.state(id, "正在连接中转")
+                    client.receive(computer.relayMessageId,
+                        connected = { retries = 0; dao.sessionConnected(id, Instant.now().toString()); dao.state(id, "中转已连接", "中转连接不代表电脑在线；电脑需运行并启用跨网络推送") },
+                        accept = { message ->
+                            val event = runCatching { message.message?.let { assembler.accept(it) } }.getOrNull()
+                            if (event != null) {
+                                EventDelivery.deliver(Instant.parse(event.occurredAt).isBefore(connectedAt),
+                                    save = { dao.acceptRelay(id, event, message.id) },
+                                    display = { showEvent(id, event) }, acknowledge = { })
+                            }
+                        }, liveOnly = computer.sessionPending)
+                } catch (e: CancellationException) { throw e
+                } catch (e: Exception) { dao.state(id, "等待中转重连", "请检查互联网与 ntfy 服务；通知缺失可切回局域网补齐")
+                } finally { client.close() }
+                delay((1000L shl minOf(retries++, 6)) + kotlin.random.Random.nextLong(500))
+            }
+        } finally {
+            withContext(NonCancellable) {
+                dao.computer(id)?.let { if (it.state == "中转已连接" || it.state == "正在连接中转") dao.state(id, "等待连接") }
+            }
+        }
+    }
     private fun createChannels() {
         notices.createNotificationChannel(NotificationChannel("bridge_status", "后台连接状态", NotificationManager.IMPORTANCE_LOW))
         notices.createNotificationChannel(NotificationChannel("bridge_messages", "电脑通知（有声）", NotificationManager.IMPORTANCE_DEFAULT))
@@ -200,10 +246,11 @@ class BridgeService : Service() {
         restarts.close(); scope.cancel(); super.onDestroy()
     }
     companion object {
-        fun start(context: Context) {
+        fun start(context: Context, newSession: Boolean = false) {
             val app = context.applicationContext as BridgeApplication
+            val begin = newSession || !app.preferences.getBoolean("running", false)
             app.preferences.edit().putBoolean("running", true).apply()
-            try { context.startForegroundService(Intent(context, BridgeService::class.java)) }
+            try { context.startForegroundService(Intent(context, BridgeService::class.java).apply { if (begin) action = "BEGIN" }) }
             catch (e: RuntimeException) {
                 CoroutineScope(Dispatchers.IO).launch { app.initialized.await(); app.db.dao().computers().forEach { app.db.dao().state(it.serverId, "后台启动受限", "请打开应用后点击开始接收") } }
             }

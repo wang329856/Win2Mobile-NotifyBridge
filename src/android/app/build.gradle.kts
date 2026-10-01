@@ -11,6 +11,7 @@ android {
     buildToolsVersion = "36.0.0"
     defaultConfig { applicationId = "com.notifforward.app"; minSdk = 26; targetSdk = 35; versionCode = 30000; versionName = "3.0.0" }
     buildFeatures { compose = true }
+    sourceSets.getByName("test").resources.srcDir("../../../tests/fixtures")
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 
     lint { abortOnError = true }

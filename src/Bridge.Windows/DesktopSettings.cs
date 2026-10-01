@@ -10,6 +10,9 @@ internal sealed class DesktopSettings
     public HashSet<string> BlockedAppIds { get; set; } = new(StringComparer.Ordinal);
     public string? SelectedAddress { get; set; }
     public bool Paused { get; set; }
+    public bool NtfyEnabled { get; set; }
+    public string NtfyServerUrl { get; set; } = "https://ntfy.sh";
+    public string NtfyProxyUrl { get; set; } = "";
     public static string DataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Win2Mobile");
     private static string SettingsPath => Path.Combine(DataDirectory, "desktop-settings.json");
     public static DesktopSettings Load()

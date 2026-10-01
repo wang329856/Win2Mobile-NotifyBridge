@@ -59,8 +59,88 @@ class BridgeDaoTest {
         assertEquals("https://192.168.1.9", dao.computer(server)?.baseUrl)
         assertEquals("Renamed", dao.computer(server)?.serverName)
     }
+    @Test fun changingLanAddressPreservesRemoteIdentityAndAllSyncProgress() = runBlocking {
+        val dao = dao(7)
+        dao.pc = dao.pc.copy(remoteEnabled = true, relaySequence = 12, relayMessageId = "Msg12", relayGapUntil = 12)
+        val before = dao.pc
+        dao.updateLanAddress(server, "192.168.1.20")
+        assertEquals(before.copy(baseUrl = "https://192.168.1.20:47721"), dao.pc)
+        try { dao.updateLanAddress(server, "http://192.168.1.21"); fail("Invalid address saved") }
+        catch (_: IllegalArgumentException) { }
+        assertEquals("https://192.168.1.20:47721", dao.pc.baseUrl)
+    }
+    @Test fun relayGapKeepsLanCursorAndLanRepairsWithoutDuplicatingAlerts() = runBlocking {
+        val dao = dao()
+        assertTrue(dao.acceptRelay(server, event(2, second), "Message2"))
+        assertEquals(0L, dao.pc.cursor)
+        assertEquals(2L, dao.pc.relaySequence)
+        assertEquals(2L, dao.pc.relayGapUntil)
+        assertTrue(dao.pc.error.contains("缺失"))
+        assertTrue(dao.accept(server, event(1)))
+        assertFalse(dao.accept(server, event(2, second)))
+        assertEquals(2L, dao.pc.cursor)
+        assertEquals(0L, dao.pc.relayGapUntil)
+        assertEquals(2, dao.events.size)
+    }
+    @Test fun relayReplayAndConflictDoNotProduceDuplicatesOrCorruptProgress() = runBlocking {
+        val dao = dao()
+        assertTrue(dao.acceptRelay(server, event(1), "Message1"))
+        assertFalse(dao.acceptRelay(server, event(1), "Message1Retry"))
+        assertEquals(0L, dao.pc.cursor)
+        assertEquals(1L, dao.pc.relaySequence)
+        try { dao.acceptRelay(server, event(2), "Conflict"); fail("Relay conflict accepted") } catch (_: IllegalArgumentException) { }
+        assertEquals(1L, dao.pc.relaySequence)
+        assertEquals("Message1Retry", dao.pc.relayMessageId)
+        assertEquals(1, dao.events.size)
+    }
+    @Test fun clearCannotBeUndoneByLanRelayReplaysOrSwitchingTransports() = runBlocking {
+        val dao = dao()
+        dao.acceptRelay(server, event(2, second), "M2")
+        dao.accept(server, event(1))
+        dao.clearHistory()
+        assertTrue(dao.events.isEmpty())
+        assertFalse(dao.accept(server, event(1)))
+        assertFalse(dao.accept(server, event(2, second)))
+        assertFalse(dao.acceptRelay(server, event(1), "M1"))
+        assertFalse(dao.acceptRelay(server, event(2, second), "M2retry"))
+        assertTrue(dao.events.isEmpty())
+        assertTrue(dao.accept(server, event(3, "dddddddd-dddd-dddd-dddd-dddddddddddd")))
+        assertEquals(1, dao.events.size)
+    }
+    @Test fun individualDeletionSurvivesRelayFirstThenLanCatchup() = runBlocking {
+        val dao = dao()
+        dao.acceptRelay(server, event(2, second), "M2")
+        dao.deleteNotification(server, second)
+        assertTrue(dao.events.isEmpty())
+        assertFalse(dao.acceptRelay(server, event(2, second), "Retry"))
+        assertTrue(dao.accept(server, event(1)))
+        assertFalse(dao.accept(server, event(2, second)))
+        assertEquals(listOf(first), dao.events.map { it.eventId })
+        assertEquals(2L, dao.pc.cursor)
+    }
+    @Test fun newSessionClearsContentButReconnectAndAddressUpdateKeepCurrentMessages() = runBlocking {
+        val dao = dao()
+        dao.accept(server, event(1))
+        val identity = dao.pc.deviceId
+        dao.beginSession()
+        assertTrue(dao.events.isEmpty())
+        assertEquals(identity, dao.pc.deviceId)
+        assertEquals(1L, dao.pc.hiddenThrough)
+        assertTrue(dao.pc.sessionPending)
+        dao.sessionConnected(server, "2026-10-01T00:00:00Z")
+        dao.alignCursor(server, 5)
+        assertFalse(dao.acceptRelay(server, event(2, second), "Old"))
+        val fresh = event(6, second).copy(occurredAt = "2026-10-01T00:00:01Z")
+        assertTrue(dao.accept(server, fresh))
+        dao.sessionConnected(server, "2026-10-01T00:01:00Z")
+        dao.updateLanAddress(server, "192.168.1.8")
+        assertEquals("2026-10-01T00:00:00Z", dao.pc.sessionStartedAt)
+        assertEquals(listOf(second), dao.events.map { it.eventId })
+        assertFalse(dao.accept(server, fresh))
+    }
     private class FakeDao(var pc: Computer) : BridgeDao() {
         val events = mutableListOf<SavedNotification>()
+        val deleted = mutableSetOf<DismissedNotification>()
         val operations = mutableListOf<String>()
         override fun observeComputers(): Flow<List<Computer>> = flowOf(listOf(pc))
         override fun observeNotifications(query: String, appId: String?, limit: Int): Flow<List<SavedNotification>> = flowOf(events.take(limit))
@@ -81,8 +161,19 @@ class BridgeDaoTest {
         override suspend fun cursor(id: String, cursor: Long) { operations += "cursor"; pc = pc.copy(cursor = cursor) }
         override suspend fun state(id: String, state: String, error: String) { pc = pc.copy(state = state, error = error) }
         override suspend fun enabled(id: String, enabled: Boolean, state: String) { pc = pc.copy(enabled = enabled, state = state) }
-        override suspend fun clearHistory() { events.clear() }
+        override suspend fun deleteAllHistory() { events.clear() }
+        override suspend fun hideReceived(id: String) { pc = pc.copy(hiddenThrough = maxOf(pc.hiddenThrough, pc.cursor, pc.relaySequence)) }
+        override suspend fun resetSession(id: String) { pc = pc.copy(sessionPending = true, sessionStartedAt = "", relayGapUntil = 0, relayMessageId = "") }
+        override suspend fun sessionConnected(id: String, startedAt: String) { if (pc.sessionPending) pc = pc.copy(sessionPending = false, sessionStartedAt = startedAt) }
+        override suspend fun dismiss(value: DismissedNotification) { deleted += value }
+        override suspend fun dismissed(id: String, eventId: String) = if (DismissedNotification(id, eventId) in deleted) 1 else 0
+        override suspend fun deleteEvent(id: String, eventId: String) { events.removeAll { it.serverId == id && it.eventId == eventId } }
+        override suspend fun deleteDismissals(id: String) { deleted.removeAll { it.serverId == id } }
         override suspend fun deleteHistory(id: String) { events.removeAll { it.serverId == id } }
         override suspend fun deleteComputer(id: String) { }
+        override suspend fun remote(id: String, remote: Boolean) { pc = pc.copy(remoteEnabled = remote) }
+        override suspend fun lanAddress(id: String, address: String) { pc = pc.copy(baseUrl = address) }
+        override suspend fun relayCursor(id: String, sequence: Long, messageId: String) { operations += "relayCursor"; pc = pc.copy(relaySequence = sequence, relayMessageId = messageId) }
+        override suspend fun relayGap(id: String, sequence: Long) { pc = pc.copy(relayGapUntil = sequence) }
     }
 }

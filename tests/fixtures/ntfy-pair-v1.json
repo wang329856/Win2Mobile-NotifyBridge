@@ -1,0 +1,12 @@
+{
+  "serverId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "requestId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  "topic": "w2m_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pairingKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "request": "{\u0022requestId\u0022:\u0022bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\u0022,\u0022nonce\u0022:\u0022clzXZnvb58SxvAOQ\u0022,\u0022data\u0022:\u0022/L9zQeIQ6hJhN1OuhbfNx3txerq5NjhuQaHzy2GD1NPa34cccL6MXQuo\u0022}",
+  "serverPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhBhvfov\u002B4Ncq6yhhGviut0EQ\u002BmHynzX9G5fLjgYmESU4\u002BMGnfglsJf53/IEwMGBbzKcWGtvwIzCAOhbkQwTn3A==",
+  "clientPrivateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBXP\u002BDztT2Gx6SVfJrLArun8ikhxrfPeeD4OELJuV09ShRANCAATLozeg4U\u002BhNxMi4DZdqmpjYdV37S8sFeKE2BZeubkqjS3Kkbi5W6yOuT/DxxBCYR5fL0CiBs/P0Bg04BsdytPt",
+  "responseKey": "7kNsNGV/wMtYQUWhyeZWdvEY2OOESqdunD71uSbjprE=",
+  "response": "{\u0022requestId\u0022:\u0022bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\u0022,\u0022nonce\u0022:\u0022WlFSUlKIlfVt4eah\u0022,\u0022data\u0022:\u00222BnQU/LykeSBoiD9B4HUEPnao7GzIpCJkKolk8mq\\u002Bvzr0d9k4Q==\u0022}",
+  "verificationCode": "783187"
+}

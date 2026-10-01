@@ -70,6 +70,17 @@ class ProtocolTest {
         rejects { StreamState(server, 4).accept(StreamFrame("hello", 1, server, 3)) }
         rejects { StreamState(server, 4).accept(StreamFrame("hello", 2, server, 4)) }
     }
+    @Test fun authenticatedSessionBaselineAndExpiryCheckpointCannotRegressOrExceedWatermark() {
+        val state = StreamState(server, 4)
+        state.accept(StreamFrame("hello", 1, server, 10, startCursor = 10))
+        assertEquals(10L, state.resumeCursor)
+        state.accept(StreamFrame("checkpoint", highWatermark = 15, startCursor = 12))
+        assertEquals(12L, state.resumeCursor)
+        rejects { state.accept(StreamFrame("checkpoint", highWatermark = 15, startCursor = 11)) }
+        rejects { state.accept(StreamFrame("checkpoint", highWatermark = 15, startCursor = 16)) }
+        rejects { StreamState(server, 4).accept(StreamFrame("checkpoint", highWatermark = 15, startCursor = 12)) }
+        rejects { StreamState(server, 4).accept(StreamFrame("hello", 1, server, 10, startCursor = 11)) }
+    }
     @Test fun streamSeparatesReplayFromNewEventsAndRequiresFreshReconnectHandshake() {
         val state = StreamState(server, 4)
         state.accept(StreamFrame("hello", 1, server, 8))

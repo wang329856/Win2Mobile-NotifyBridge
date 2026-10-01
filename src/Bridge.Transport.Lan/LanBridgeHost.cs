@@ -91,12 +91,13 @@ public sealed class LanBridgeHost : IAsyncDisposable
             }).RequireRateLimiting("pair-poll");
             app.MapGet("/v1/events", (HttpContext context) =>
             {
-                if (Authenticate(context) is null) return Results.Unauthorized();
+                var deviceId = Authenticate(context); if (deviceId is null) return Results.Unauthorized();
                 if (!Cursor(context, out var after) || !Limit(context, out var limit)) return Results.BadRequest();
+                after = Math.Max(after, Math.Max(store.GetStartSequence(deviceId), store.QueueFloor));
                 // Snapshot watermark first. Entries appended later belong to the next page/stream.
                 var highWatermark = store.HighWatermark;
                 var events = store.GetEvents(after, limit).Where(e => e.Sequence <= highWatermark).ToArray();
-                return Results.Json(new { events, nextCursor = events.Length == 0 ? after : events[^1].Sequence, highWatermark }, JsonOptions);
+                return Results.Json(new { events, startCursor = after, nextCursor = events.Length == 0 ? after : events[^1].Sequence, highWatermark }, JsonOptions);
             });
             app.MapPost("/v1/acks", async (HttpContext context) =>
             {
@@ -133,6 +134,9 @@ public sealed class LanBridgeHost : IAsyncDisposable
         var deviceId = Authenticate(context);
         if (deviceId is null) { context.Response.StatusCode = 401; return; }
         if (!Cursor(context, out var after) || !context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = 400; return; }
+        var liveValues = context.Request.Query["live"];
+        if (liveValues.Count > 1 || (liveValues.Count == 1 && liveValues[0] is not ("true" or "false"))) { context.Response.StatusCode = 400; return; }
+        var live = liveValues.Count == 1 && liveValues[0] == "true";
         if (!await streamSlots.WaitAsync(0, context.RequestAborted)) { context.Response.StatusCode = 429; return; }
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
         var signal = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
@@ -151,11 +155,20 @@ public sealed class LanBridgeHost : IAsyncDisposable
             if (!store.IsDeviceActive(deviceId)) { context.Response.StatusCode = 401; return; }
             socket = await context.WebSockets.AcceptWebSocketAsync();
             receive = ObservePeerAsync(socket, lifetime);
-            await SendAsync(socket, new { kind = "hello", protocolVersion = 1, serverId = store.Identity.ServerId, highWatermark = store.HighWatermark }, lifetime.Token);
+            var highWatermark = store.HighWatermark;
+            after = Math.Max(after, Math.Max(store.GetStartSequence(deviceId), store.QueueFloor));
+            if (live) after = Math.Max(after, highWatermark);
+            await SendAsync(socket, new { kind = "hello", protocolVersion = 1, serverId = store.Identity.ServerId, highWatermark, startCursor = after }, lifetime.Token);
             var heartbeatAt = DateTimeOffset.UtcNow.AddSeconds(25);
             while (!lifetime.IsCancellationRequested)
             {
                 if (!store.IsDeviceActive(deviceId)) break;
+                var floor = store.QueueFloor;
+                if (after < floor)
+                {
+                    after = floor;
+                    await SendAsync(socket, new { kind = "checkpoint", highWatermark = store.HighWatermark, startCursor = after }, lifetime.Token);
+                }
                 var events = store.GetEvents(after);
                 foreach (var item in events)
                 {

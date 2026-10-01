@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="../Bridge.Core/Bridge.Core.csproj" />
     <ProjectReference Include="../Bridge.Transport.Lan/Bridge.Transport.Lan.csproj" />
+    <ProjectReference Include="../Bridge.Transport.Ntfy/Bridge.Transport.Ntfy.csproj" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$PublishDirectory,
     [string]$OutputDirectory,
@@ -45,7 +45,7 @@ $stage = Join-Path $OutputDirectory ('stage-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
 Copy-Item -Path (Join-Path $PublishDirectory '*') -Destination $stage -Recurse
-[xml]$manifest = Get-Content -LiteralPath (Join-Path $repoRoot 'packaging/windows/AppxManifest.xml') -Raw
+[xml]$manifest = Get-Content -LiteralPath (Join-Path $repoRoot 'packaging/windows/AppxManifest.xml') -Raw -Encoding utf8
 $manifest.Package.Identity.SetAttribute('Publisher', $Publisher)
 $manifest.Package.Identity.SetAttribute('Version', $Version)
 $manifest.Save((Join-Path $stage 'AppxManifest.xml'))

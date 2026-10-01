@@ -5,4 +5,5 @@ public record BridgeEvent(long Sequence, string EventId, string SourceDeviceId, 
 public record ServerIdentity(string ServerId, string ServerName);
 public record PairedDevice(string DeviceId, string DeviceName, DateTimeOffset CreatedAt, long AcknowledgedSequence);
 public record DeviceCredential(string DeviceId, string AccessToken);
+public record NtfyCredentials(string ServerUrl, string Topic, string Key, long StartSequence);
 public sealed class DeviceRevokedEventArgs(string deviceId) : EventArgs { public string DeviceId { get; } = deviceId; }

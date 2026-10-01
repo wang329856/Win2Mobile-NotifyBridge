@@ -19,6 +19,9 @@ jobs:
       - name: Desktop capture state
         shell: pwsh
         run: ./scripts/test_windows.ps1
+      - name: Encrypted ntfy transport
+        shell: pwsh
+        run: ./scripts/test_ntfy.ps1
       - name: Build self-contained desktop
         shell: pwsh
         run: ./scripts/build_windows.ps1

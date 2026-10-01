@@ -8,7 +8,7 @@ import java.io.IOException
 /** Stable boundary for future transports. This version supplies only the LAN implementation. */
 interface BridgeTransport : AutoCloseable {
     suspend fun pair(payload: PairPayload, deviceName: String, waiting: (String) -> Unit): PairResult
-    fun stream(cursor: Long, token: String, listener: WebSocketListener): WebSocket
+    fun stream(cursor: Long, token: String, listener: WebSocketListener, liveOnly: Boolean = false): WebSocket
     suspend fun ack(sequence: Long, token: String)
     override fun close()
 }

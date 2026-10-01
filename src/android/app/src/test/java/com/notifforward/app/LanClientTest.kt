@@ -2,6 +2,7 @@ package com.notifforward.app
 
 import kotlinx.coroutines.*
 import okhttp3.*
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
@@ -67,6 +68,21 @@ class LanClientTest {
         server.enqueue(MockResponse().setBody("""{"acknowledgedSequence":0}"""))
         try { client("0".repeat(64)).ack(0, "token"); fail("Wrong pin accepted") }
         catch (_: javax.net.ssl.SSLException) { }
+    }
+    @Test fun changedLanEndpointStillRequiresTheOriginalCertificate() = runBlocking {
+        val address = LanAddress.normalize(server.url("/").newBuilder().host("192.0.2.1").build().toString())
+        assertTrue(address.contains(":${server.port}"))
+        // Route the changed public-facing LAN address to this local broker; DER pin remains authoritative.
+        server.enqueue(MockResponse().setBody("""{"acknowledgedSequence":0}"""))
+        val client = LanClient(address, pin()).also { clients += it }
+        val routed = client.http.newBuilder().dns(object : Dns {
+            override fun lookup(hostname: String) = listOf(java.net.InetAddress.getByName("127.0.0.1"))
+        }).build()
+        // Use a hostname so custom DNS routing participates; the certificate lacks this hostname.
+        val result = routed.newCall(Request.Builder().url("https://changed-pc.test:${server.port}/v1/acks")
+            .post("{}".toRequestBody()).build()).execute()
+        result.use { assertEquals(200, it.code) }
+        routed.connectionPool.evictAll()
     }
     @Test fun cancelPairingImmediatelyReleasesItsOutstandingHttpCall() = runBlocking {
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))

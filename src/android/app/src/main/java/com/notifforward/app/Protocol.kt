@@ -29,7 +29,7 @@ data class PairPayload(val schema: String, val protocolVersion: Int, val baseUrl
 @Serializable data class PairRequest(val pairingCode: String, val deviceName: String)
 @Serializable data class PairPending(val requestId: String, val requestSecret: String, val status: String, val expiresAt: String)
 @Serializable data class PairResult(val status: String, val serverId: String, val serverName: String,
-    val deviceId: String? = null, val accessToken: String? = null)
+    val deviceId: String? = null, val accessToken: String? = null, val ntfy: NtfyCredentials? = null, val startSequence: Long = 0)
 @Serializable data class BridgeEvent(val sequence: Long, val eventId: String, val sourceDeviceId: String,
     val sourceNotificationId: String, val appId: String, val appName: String, val title: String,
     val body: String, val occurredAt: String) {
@@ -41,7 +41,7 @@ data class PairPayload(val schema: String, val protocolVersion: Int, val baseUrl
     }
 }
 @Serializable data class StreamFrame(val kind: String, val protocolVersion: Int? = null, val serverId: String? = null,
-    val highWatermark: Long? = null, val event: BridgeEvent? = null, val serverTime: String? = null)
+    val highWatermark: Long? = null, val event: BridgeEvent? = null, val serverTime: String? = null, val startCursor: Long? = null)
 @Serializable data class AckRequest(val sequence: Long)
 @Serializable data class AckResponse(val acknowledgedSequence: Long)
 
@@ -65,12 +65,22 @@ object CursorPolicy {
 class StreamState(private val serverId: String, private val initialCursor: Long) {
     var watermark: Long? = null
         private set
+    var resumeCursor: Long = initialCursor
+        private set
     fun accept(frame: StreamFrame) {
         when (frame.kind) {
             "hello" -> {
                 require(watermark == null && frame.protocolVersion == 1 && frame.serverId == serverId &&
                     (frame.highWatermark ?: -1) >= initialCursor) { "电脑协议或身份不一致" }
                 watermark = frame.highWatermark
+                val start = frame.startCursor ?: initialCursor
+                require(start in initialCursor..frame.highWatermark!!) { "电脑起始序号无效" }
+                resumeCursor = start
+            }
+            "checkpoint" -> {
+                require(watermark != null && frame.startCursor != null && frame.highWatermark != null &&
+                    frame.highWatermark >= watermark!! && frame.startCursor in resumeCursor..frame.highWatermark) { "电脑队列进度无效" }
+                resumeCursor = frame.startCursor
             }
             "event" -> { require(watermark != null) { "缺少服务器握手" }; (frame.event ?: error("事件为空")).validate(serverId) }
             "heartbeat" -> { require(watermark != null) { "缺少服务器握手" }; Instant.parse(frame.serverTime) }

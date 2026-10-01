@@ -2,10 +2,12 @@
   <Folder Name="/src/">
     <Project Path="src/Bridge.Core/Bridge.Core.csproj" />
     <Project Path="src/Bridge.Transport.Lan/Bridge.Transport.Lan.csproj" />
+    <Project Path="src/Bridge.Transport.Ntfy/Bridge.Transport.Ntfy.csproj" />
     <Project Path="src/Bridge.Windows/Bridge.Windows.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Bridge.IntegrationTests/Bridge.IntegrationTests.csproj" />
     <Project Path="tests/Bridge.Windows.Tests/Bridge.Windows.Tests.csproj" />
+    <Project Path="tests/Bridge.Ntfy.Tests/Bridge.Ntfy.Tests.csproj" />
   </Folder>
 </Solution>

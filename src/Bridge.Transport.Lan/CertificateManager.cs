@@ -65,8 +65,10 @@ public static class CertificateManager
     [DllImport("crypt32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CryptUnprotectData(ref Blob input, IntPtr description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, out Blob output);
     [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
-    private static byte[] Protect(byte[] bytes, bool decrypt)
+    /// <summary>Protect local credentials with the current Windows user's DPAPI identity.</summary>
+    public static byte[] Protect(byte[] bytes, bool decrypt)
     {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("User data protection requires Windows DPAPI.");
         var input = new Blob { Length = bytes.Length, Data = Marshal.AllocHGlobal(bytes.Length) };
         Blob output = default;
         try

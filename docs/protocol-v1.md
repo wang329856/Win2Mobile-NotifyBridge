@@ -10,17 +10,19 @@
 
 POST /v1/pairing/requests，body `{pairingCode,deviceName}`。成功 202：`{requestId,requestSecret,status:"pending",expiresAt}`。
 
-GET /v1/pairing/requests/{requestId}，头 `X-Pairing-Secret` 为首次响应秘密。200：`{status:"pending"|"approved"|"denied"|"expired",deviceId?,accessToken?,serverId,serverName}`。手机每秒查询，最长 120 秒；电脑明确批准才能取得 token。requestSecret 和 token 不写日志。
+GET /v1/pairing/requests/{requestId}，头 `X-Pairing-Secret` 为首次响应秘密。200：`{status:"pending"|"approved"|"denied"|"expired",deviceId?,accessToken?,serverId,serverName,startSequence,ntfy?}`。批准时冻结 startSequence 为当前电脑序号，LAN 和中转均不向此设备提供更早记录。手机每秒查询，最长 120 秒；电脑明确批准才能取得 token。requestSecret 和 token 不写日志。
 
 ## 健康与事件
 
 GET /v1/health，无认证：`{protocolVersion:1,serverId,serverName,status:"ready",highWatermark}`，不公开通知正文或设备列表。
 
-GET /v1/events?after=0&limit=200，Bearer 认证：`{events:[BridgeEvent],nextCursor,highWatermark}`。limit 1..200；after 非负。游标为每台电脑持久递增序号。
+GET /v1/events?after=0&limit=200，Bearer 认证：`{events:[BridgeEvent],startCursor,nextCursor,highWatermark}`。limit 1..200；after 非负。实际 startCursor 不低于此设备的授权起点及已清理队列前缀。游标为每台电脑持久递增序号，队列全部清理也不重置。
 
-GET /v1/events/stream?after=0，Bearer 认证，WebSocket。首帧 `{kind:"hello",protocolVersion:1,serverId,highWatermark}`。之后每条 `{kind:"event",event:BridgeEvent}`，25 秒心跳 `{kind:"heartbeat",serverTime}`。历史补取与实时消息使用相同有序流，消息保留期内不能遗漏；撤销设备后终止连接。手机保存成功后 POST /v1/acks，body `{sequence}`，200 `{acknowledgedSequence}`。确认值必须非负，不超过服务器高水位，单调推进。
+GET /v1/events/stream?after=0，Bearer 认证，WebSocket。新会话首次连接增加 `live=true` 跳过已存在通知；同一会话重连不使用该参数。首帧 `{kind:"hello",protocolVersion:1,serverId,highWatermark,startCursor}`。之后每条 `{kind:"event",event:BridgeEvent}`，25 秒心跳 `{kind:"heartbeat",serverTime}`。临时队列清理追上当前连接时发送 `{kind:"checkpoint",highWatermark,startCursor}`，手机验证其不倒退、不超过高水位后跳过过期前缀。补收与实时消息使用相同有序流；撤销设备后终止连接。手机保存成功后 POST /v1/acks，body `{sequence}`，200 `{acknowledgedSequence}`。确认值必须非负，不超过服务器高水位，单调推进。
 
-BridgeEvent：`{sequence:1,eventId:"UUID",sourceDeviceId:"服务器 ID",sourceNotificationId:"来源 ID",appId:"稳定应用 ID",appName:"显示名",title:"标题",body:"正文",occurredAt:"2026-09-30T00:00:00Z"}`。同一个 eventId 重放不产生第二条手机记录。保存确认与用户阅读不同。历史重放可以保存但不成批响铃；首帧高水位以内视为重放。
+BridgeEvent：`{sequence:1,eventId:"UUID",sourceDeviceId:"服务器 ID",sourceNotificationId:"来源 ID",appId:"稳定应用 ID",appName:"显示名",title:"标题",body:"正文",occurredAt:"2026-09-30T00:00:00Z"}`。同一个 eventId 重放不产生第二条手机记录，已删除记录也不会重新插入。保存确认与用户阅读不同。本次会话内断网补收保存但不成批响铃；首帧高水位以内视为重放。手机手动开始会话清空消息内容并保留进度；单条删除保留 eventId 标记，清空以最大已接收序号阻止此前记录再次显示。
+
+Windows 使用按入库时间最多 24 小时、最多 1000 条的临时发送队列，清理连续前缀而不重置 SQLite 自增序号。没有授权设备时不采集入库；新设备授权前通知无法通过其 token 读取。此队列用于短暂断网和发送重试，不是永久历史。
 
 ## 桌面和后端之间的 C# 接口
 

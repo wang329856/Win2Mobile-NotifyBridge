@@ -16,6 +16,7 @@ using Windows.ApplicationModel;
 using QRCoder;
 using Win2Mobile.Core;
 using Win2Mobile.Transport.Lan;
+using Win2Mobile.Transport.Ntfy;
 using Forms = System.Windows.Forms;
 
 namespace Win2Mobile.Windows;
@@ -35,6 +36,10 @@ public partial class MainWindow : Window
     private DesktopSettings? _settings;
     private BridgeStore? _store;
     private LanBridgeHost? _host;
+    private NtfyRegistry? _ntfyRegistry;
+    private NtfyPublisher? _ntfyPublisher;
+    private NtfyRemotePairing? _remotePairing;
+    private string? _remotePayload;
     private X509Certificate2? _certificate;
     private NotificationCapture? _capture;
     private Forms.NotifyIcon? _tray;
@@ -59,8 +64,11 @@ public partial class MainWindow : Window
         try
         {
             _settings = DesktopSettings.Load();
+            NtfyEnabledCheck.IsChecked = _settings.NtfyEnabled;
+            NtfyServerText.Text = _settings.NtfyServerUrl;
+            NtfyProxyText.Text = _settings.NtfyProxyUrl;
             DataPath.Text = "用户数据目录：" + DesktopSettings.DataDirectory;
-            _store = new BridgeStore(Path.Combine(DesktopSettings.DataDirectory, "bridge.db"), Environment.MachineName);
+            _store = new BridgeStore(Path.Combine(DesktopSettings.DataDirectory, "bridge.db"), Environment.MachineName, transientQueue: true);
             foreach (var item in _store.GetEvents(Math.Max(0, _store.HighWatermark - 100), 100).Reverse()) _recent.Add(item);
             foreach (var item in _recent) DiscoverApp(item.AppId, item.AppName);
             foreach (var id in _settings.BlockedAppIds) DiscoverApp(id, id);
@@ -72,6 +80,11 @@ public partial class MainWindow : Window
             await _capture.InitializeAsync(false);
             _certificate = CertificateManager.GetOrCreate(DesktopSettings.DataDirectory);
             _host = new LanBridgeHost(_store, _certificate);
+            _ntfyRegistry = new NtfyRegistry(Path.Combine(DesktopSettings.DataDirectory, "ntfy-devices.dpapi"), _store);
+            if (_ntfyRegistry.RemovedLegacyTopics) ActionStatus.Text = "旧版跨网络凭据超出中转长度限制，请重新配对；原局域网授权和历史已保留。";
+            _ntfyRegistry.Configure(_settings.NtfyEnabled, _settings.NtfyServerUrl);
+            _host.Pairing.RelayCredentials = _ntfyRegistry.Provision;
+            StartNtfy();
             _host.Pairing.Changed += PairingChanged;
             await _host.StartAsync();
             _serviceReady = true;
@@ -79,7 +92,7 @@ public partial class MainWindow : Window
             RescanAddresses();
             RefreshPairing();
             await RefreshStartupAsync();
-            _refreshTimer = new DispatcherTimer(TimeSpan.FromSeconds(2), DispatcherPriority.Background, (_, _) => RefreshLists(), Dispatcher);
+            _refreshTimer = new DispatcherTimer(TimeSpan.FromSeconds(2), DispatcherPriority.Background, (_, _) => { _store?.PruneQueue(); RefreshLists(); }, Dispatcher);
             RefreshLists();
         }
         catch (Exception ex)
@@ -112,6 +125,8 @@ public partial class MainWindow : Window
         _capture?.Dispose();
         try
         {
+            if (_remotePairing is not null) { await _remotePairing.DisposeAsync(); _remotePairing = null; }
+            if (_ntfyPublisher is not null) { await _ntfyPublisher.DisposeAsync(); _ntfyPublisher = null; }
             if (_host is not null) { _host.Pairing.Changed -= PairingChanged; await _host.DisposeAsync(); }
         }
         catch (Exception ex) { MessageBox.Show("停止局域网服务时发生错误：" + ex.Message, "Win2Mobile"); }
@@ -127,6 +142,7 @@ public partial class MainWindow : Window
     {
         if (_store is null || _settings is null) return false;
         if (_settings.BlockedAppIds.Contains(notification.AppId)) return true;
+        if (_store.GetDevices().Count == 0) return true;
         return AppendAndDisplay(notification);
     }
     private bool AppendAndDisplay(CapturedNotification notification)
@@ -165,6 +181,75 @@ public partial class MainWindow : Window
         try { _settings?.Save(); }
         catch (Exception ex) { ActionStatus.Text = "设置保存失败：" + ex.Message; }
     }
+    private void StartNtfy()
+    {
+        if (_settings?.NtfyEnabled != true || _store is null || _ntfyRegistry is null) { NtfyStatus.Text = "跨网络推送已关闭"; return; }
+        _ntfyPublisher = new NtfyPublisher(_store, _ntfyRegistry, proxyUrl: _settings.NtfyProxyUrl);
+        var current = _ntfyPublisher;
+        current.Status += status => Dispatcher.BeginInvoke(() => { if (!_exiting && ReferenceEquals(current, _ntfyPublisher) && _settings?.NtfyEnabled == true) NtfyStatus.Text = status; });
+        NtfyStatus.Text = "跨网络推送已开启；请在手机重新扫码配对以取得授权密钥。";
+        _ntfyPublisher.Start();
+    }
+    private async void NtfyApplyClick(object sender, RoutedEventArgs e)
+    {
+        if (_settings is null || _ntfyRegistry is null) return;
+        NtfyApplyButton.IsEnabled = false;
+        var previousEnabled = _settings.NtfyEnabled; var previousUrl = _settings.NtfyServerUrl;
+        var previousProxy = _settings.NtfyProxyUrl;
+        try
+        {
+            var url = NtfyProtocol.ValidateServer(NtfyServerText.Text.Trim());
+            var proxy = NtfyNetwork.ValidateProxy(NtfyProxyText.Text.Trim());
+            if (_remotePairing is not null) { var old = _remotePairing; _remotePairing = null; _remotePayload = null; RemotePairQr.Source = null; await old.DisposeAsync(); }
+            if (_ntfyPublisher is not null) { await _ntfyPublisher.DisposeAsync(); _ntfyPublisher = null; }
+            _ntfyRegistry.Configure(NtfyEnabledCheck.IsChecked == true, url);
+            _settings.NtfyEnabled = NtfyEnabledCheck.IsChecked == true; _settings.NtfyServerUrl = url;
+            _settings.NtfyProxyUrl = proxy;
+            _settings.Save();
+            StartNtfy();
+        }
+        catch (Exception ex)
+        {
+            _settings.NtfyEnabled = previousEnabled; _settings.NtfyServerUrl = previousUrl;
+            _settings.NtfyProxyUrl = previousProxy;
+            _ntfyRegistry.Configure(previousEnabled, previousUrl);
+            if (_ntfyPublisher is null) StartNtfy();
+            NtfyEnabledCheck.IsChecked = previousEnabled; NtfyServerText.Text = previousUrl;
+            NtfyProxyText.Text = previousProxy;
+            ActionStatus.Text = "跨网络设置未应用：" + ex.Message;
+        }
+        finally { NtfyApplyButton.IsEnabled = true; }
+    }
+    private async void RemotePairClick(object sender, RoutedEventArgs e)
+    {
+        if (_host is null || _settings?.NtfyEnabled != true) { RemotePairStatus.Text = "请先启用并应用跨网络设置。"; return; }
+        RemotePairButton.IsEnabled = false;
+        try
+        {
+            var old = _remotePairing; _remotePairing = null; _remotePayload = null; RemotePairQr.Source = null;
+            if (old is not null) await old.DisposeAsync();
+            _remotePairing = new NtfyRemotePairing(_host, Addresses.SelectedItem as string ?? "127.0.0.1", _settings.NtfyServerUrl, proxyUrl: _settings.NtfyProxyUrl);
+            var current = _remotePairing;
+            current.Status += status => Dispatcher.BeginInvoke(() => { if (!_exiting && ReferenceEquals(current, _remotePairing)) RemotePairStatus.Text = status; });
+            _remotePayload = current.Payload;
+            using var data = QRCodeGenerator.GenerateQrCode(_remotePayload, QRCodeGenerator.ECCLevel.M);
+            using var qr = new PngByteQRCode(data); using var stream = new MemoryStream(qr.GetGraphic(5));
+            var bitmap = new BitmapImage(); bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
+            RemotePairQr.Source = bitmap;
+            // The remote session refreshes the LAN code; prevent displaying an invalid old LAN QR.
+            PairingQr.Source = null; QrStatus.Text = "已生成远程二维码；局域网扫码请重新刷新局域网二维码。";
+            RemotePairStatus.Text = "远程二维码已生成，120 秒内扫描或粘贴；手机和电脑必须核对同样的六位校验码后批准。";
+            current.Start();
+        }
+        catch (Exception) { RemotePairStatus.Text = "远程二维码生成失败，请检查设置后重新生成。"; _remotePayload = null; RemotePairQr.Source = null; }
+        finally { RemotePairButton.IsEnabled = true; }
+    }
+    private void CopyRemotePairClick(object sender, RoutedEventArgs e)
+    {
+        if (_remotePayload is null) { RemotePairStatus.Text = "请先生成远程二维码。"; return; }
+        try { System.Windows.Clipboard.SetText(_remotePayload); RemotePairStatus.Text = "远程配对信息已复制，仅通过可信渠道交给自己的手机。到期后重新生成，配对完成后请清理剪贴板。"; }
+        catch (Exception) { RemotePairStatus.Text = "无法复制配对信息，请扫描二维码。"; }
+    }
     private async void AuthorizeClick(object sender, RoutedEventArgs e)
     {
         // WPF event handlers resume on the real UI dispatcher, as required by RequestAccessAsync.
@@ -196,10 +281,13 @@ public partial class MainWindow : Window
     {
         var addresses = NetworkInterface.GetAllNetworkInterfaces()
             .Where(x => x.OperationalStatus == OperationalStatus.Up && x.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-            .SelectMany(x => x.GetIPProperties().UnicastAddresses)
-            .Select(x => x.Address)
-            .Where(x => x.AddressFamily == AddressFamily.InterNetwork && !x.ToString().StartsWith("169.254.", StringComparison.Ordinal))
-            .Select(x => x.ToString()).Distinct().OrderBy(x => x).ToArray();
+            .OrderBy(x => System.Text.RegularExpressions.Regex.IsMatch(x.Name + " " + x.Description,
+                "virtual|vEthernet|Hyper-V|WSL|VPN|Clash|VMware|VBox|TAP|TUN", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ? 1 : 0)
+            .ThenByDescending(x => x.GetIPProperties().GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork))
+            .SelectMany(x => x.GetIPProperties().UnicastAddresses.Select(a => a.Address)
+                .Where(a => a.AddressFamily == AddressFamily.InterNetwork && !a.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+                .OrderBy(a => a.ToString()))
+            .Select(x => x.ToString()).Distinct().ToArray();
         Addresses.ItemsSource = addresses;
         Addresses.SelectedItem = addresses.Contains(_settings?.SelectedAddress) ? _settings!.SelectedAddress : addresses.FirstOrDefault();
         if (addresses.Length == 0) { PairingQr.Source = null; QrStatus.Text = "没有可用局域网 IPv4 地址，请连接网络后重新扫描。"; }
@@ -234,15 +322,26 @@ public partial class MainWindow : Window
     }
     private void RefreshLists()
     {
+        if (_remotePayload is not null && _remotePairing is { } remote && DateTimeOffset.UtcNow >= remote.ExpiresAt)
+        {
+            _remotePayload = null; RemotePairQr.Source = null;
+            RemotePairStatus.Text = "远程二维码已过期，请重新生成；已提交请求仍需核对校验码并在请求期限内批准。";
+        }
         if (_exiting || _host is null || _store is null) return;
         try
         {
+            foreach (var item in _recent.Where(x => x.Sequence <= _store.QueueFloor).ToArray()) _recent.Remove(item);
             string? pendingId = (PendingList.SelectedItem as PendingPairing)?.RequestId;
+            string? remotePendingId = (RemotePendingList.SelectedItem as PendingPairing)?.RequestId;
             string? deviceId = (DeviceList.SelectedItem as PairedDevice)?.DeviceId;
             var pending = _host.Pairing.PendingRequests.ToArray();
             var devices = _store.GetDevices();
             PendingList.ItemsSource = pending;
             PendingList.SelectedItem = pending.FirstOrDefault(x => x.RequestId == pendingId);
+            var remotePending = pending.Where(x => x.VerificationCode is not null).ToArray();
+            RemotePendingList.ItemsSource = remotePending;
+            RemotePendingList.SelectedItem = remotePending.FirstOrDefault(x => x.RequestId == remotePendingId);
+            RemotePendingHint.Text = remotePending.Length > 0 ? "已收到请求，请核对下面的六位码与手机显示是否一致。" : "暂无待批准请求。手机应显示“请求已发送”；若仍在连接或重试，请先检查两端网络。";
             DeviceList.ItemsSource = devices;
             DeviceList.SelectedItem = devices.FirstOrDefault(x => x.DeviceId == deviceId);
             if (PairingQr.Source is not null)
@@ -254,11 +353,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { ActionStatus.Text = "设备状态刷新失败：" + ex.Message; }
     }
-    private void ApproveClick(object sender, RoutedEventArgs e) => RespondToPairing(true);
-    private void DenyClick(object sender, RoutedEventArgs e) => RespondToPairing(false);
-    private void RespondToPairing(bool approve)
+    private void ApproveClick(object sender, RoutedEventArgs e) => RespondToPairing(true, PendingList.SelectedItem as PendingPairing);
+    private void DenyClick(object sender, RoutedEventArgs e) => RespondToPairing(false, PendingList.SelectedItem as PendingPairing);
+    private void ApproveRemoteClick(object sender, RoutedEventArgs e) => RespondToPairing(true, RemotePendingList.SelectedItem as PendingPairing);
+    private void DenyRemoteClick(object sender, RoutedEventArgs e) => RespondToPairing(false, RemotePendingList.SelectedItem as PendingPairing);
+    private void RespondToPairing(bool approve, PendingPairing? request)
     {
-        if (_host is null || PendingList.SelectedItem is not PendingPairing request) { ActionStatus.Text = "请先选择待批准请求。"; return; }
+        if (_host is null || request is null) { ActionStatus.Text = "请先选择待批准请求。"; return; }
         try
         {
             if (request.ExpiresAt <= DateTimeOffset.UtcNow || !_host.Pairing.PendingRequests.Any(x => x.RequestId == request.RequestId))

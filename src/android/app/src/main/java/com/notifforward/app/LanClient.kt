@@ -83,8 +83,8 @@ class LanClient(baseUrl: String, fingerprint: String, network: Network? = null) 
         }
         error("配对已过期，请重新扫描电脑二维码")
     }
-    override fun stream(cursor: Long, token: String, listener: WebSocketListener): WebSocket = http.newWebSocket(
-        Request.Builder().url(base.replaceFirst("https://", "wss://") + "/v1/events/stream?after=$cursor")
+    override fun stream(cursor: Long, token: String, listener: WebSocketListener, liveOnly: Boolean): WebSocket = http.newWebSocket(
+        Request.Builder().url(base.replaceFirst("https://", "wss://") + "/v1/events/stream?after=$cursor" + if (liveOnly) "&live=true" else "")
             .header("Authorization", "Bearer $token").build(), listener)
     override suspend fun ack(sequence: Long, token: String) {
         val result = wireJson.decodeFromString<AckResponse>(request("/v1/acks", wireJson.encodeToString(AckRequest(sequence)), token))

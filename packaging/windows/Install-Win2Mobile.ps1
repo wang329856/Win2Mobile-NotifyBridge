@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([Parameter(Mandatory)][string]$PackagePath)
 $ErrorActionPreference = 'Stop'
 $resolved = (Resolve-Path -LiteralPath $PackagePath).Path

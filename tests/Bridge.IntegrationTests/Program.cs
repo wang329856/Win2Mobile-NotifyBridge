@@ -42,6 +42,7 @@ static async Task RunAsync(string directory)
         Console.WriteLine("Native SQLite: " + version);
     }
     var database = Path.Combine(directory, "bridge.db"); string serverId; string persistedToken; string persistedDevice; string firstEventId;
+    await TestSessionQueueAsync(directory);
     await TestFreshSourceCompetitionAsync(directory);
     TestExpiryNotifications(directory);
     using var certificate = OperatingSystem.IsWindows() ? CertificateManager.GetOrCreate(directory) : CreateTestCertificate();
@@ -94,6 +95,7 @@ static async Task RunAsync(string directory)
         host.Pairing.Approve(id);
         var approved = await GetJsonAsync(client, statusPath);
         persistedToken = approved.GetProperty("accessToken").GetString()!; persistedDevice = approved.GetProperty("deviceId").GetString()!;
+        Check(approved.GetProperty("startSequence").GetInt64() == 100, "Pairing disclosed an incorrect baseline");
         Check(persistedToken.Length == 64 && store.Authenticate(persistedToken) == persistedDevice, "Approved token failed");
         var denied = host.Pairing.CreateRequest(code, "Denied phone"); host.Pairing.Deny(denied.RequestId);
         Check(host.Pairing.GetStatus(denied.RequestId, denied.RequestSecret)?.Status == "denied", "UI denial failed");
@@ -107,11 +109,13 @@ static async Task RunAsync(string directory)
         }
         foreach (var invalid in new[] { "after=-1", "limit=0", "limit=201", "after=9223372036854775808", "after=0&after=1" })
             Check((await client.GetAsync("/v1/events?" + invalid)).StatusCode == HttpStatusCode.BadRequest, "Invalid cursor/limit accepted: " + invalid);
-        var page1 = await GetJsonAsync(client, "/v1/events?after=0&limit=40");
-        Check(page1.GetProperty("events").GetArrayLength() == 40 && page1.GetProperty("nextCursor").GetInt64() == 40, "Pagination failed");
-        var page2 = await GetJsonAsync(client, "/v1/events?after=40&limit=200");
-        Check(page2.GetProperty("events").GetArrayLength() == 60 && page2.GetProperty("highWatermark").GetInt64() == 100, "Pagination second page failed");
+        var beforePairing = await GetJsonAsync(client, "/v1/events?after=0&limit=40");
+        Check(beforePairing.GetProperty("events").GetArrayLength() == 0 && beforePairing.GetProperty("nextCursor").GetInt64() == 100, "HTTP disclosed pre-pairing notifications");
         Parallel.For(101, 451, i => store.Append(Notification(i)));
+        var page1 = await GetJsonAsync(client, "/v1/events?after=0&limit=40");
+        Check(page1.GetProperty("events").GetArrayLength() == 40 && page1.GetProperty("nextCursor").GetInt64() == 140, "Pagination failed");
+        var page2 = await GetJsonAsync(client, "/v1/events?after=140&limit=200");
+        Check(page2.GetProperty("events").GetArrayLength() == 200 && page2.GetProperty("highWatermark").GetInt64() == 450, "Pagination second page failed");
         long pageCursor = 0; var pagedSequences = new List<long>();
         do
         {
@@ -119,15 +123,16 @@ static async Task RunAsync(string directory)
             pagedSequences.AddRange(page.GetProperty("events").EnumerateArray().Select(e => e.GetProperty("sequence").GetInt64()));
             pageCursor = page.GetProperty("nextCursor").GetInt64();
         } while (pageCursor < 450);
-        Check(pagedSequences.SequenceEqual(Enumerable.Range(1, 450).Select(n => (long)n)), "Multi-page HTTP replay lost/reordered events");
+        Check(pagedSequences.SequenceEqual(Enumerable.Range(101, 350).Select(n => (long)n)), "Multi-page HTTP replay lost/reordered events");
         using (var socket = MakeSocket(persistedToken, fingerprint))
         {
             await socket.ConnectAsync(new Uri($"wss://localhost:{port}/v1/events/stream?after=0"), CancellationToken.None);
             var hello = await ReceiveAsync(socket);
             Check(hello.GetProperty("kind").GetString() == "hello" && hello.GetProperty("highWatermark").GetInt64() == 450, "WSS hello failed");
-            for (int n = 1; n <= 470; n++)
+            Check(hello.GetProperty("startCursor").GetInt64() == 100, "WSS disclosed a pre-pairing baseline");
+            for (int n = 101; n <= 470; n++)
             {
-                if (n == 10) Parallel.For(451, 471, i => store.Append(Notification(i)));
+                if (n == 110) Parallel.For(451, 471, i => store.Append(Notification(i)));
                 var frame = await ReceiveAsync(socket);
                 Check(frame.GetProperty("kind").GetString() == "event" && frame.GetProperty("event").GetProperty("sequence").GetInt64() == n, "History/live seam lost/reordered a message at " + n);
             }
@@ -198,6 +203,57 @@ static async Task RunAsync(string directory)
         await TestCertificateHandshakeAsync(directory, reloaded);
         await TestCertificateProcessesAsync(directory);
     }
+}
+
+static async Task TestSessionQueueAsync(string directory)
+{
+    var path = Path.Combine(directory, "session-queue.db");
+    var clock = new TestClock();
+    string deviceId;
+    using (var store = new BridgeStore(path, "Session PC", transientQueue: true, clock: clock))
+    {
+        for (int i = 1; i <= 1005; i++) store.Append(Notification(i));
+        Check(store.QueueFloor == 5 && store.GetEvents(0, 200).First().Sequence == 6, "Queue capacity did not remove its prefix");
+        var credentials = store.RegisterDevice("Session phone"); deviceId = credentials.DeviceId;
+        Check(store.GetStartSequence(deviceId) == 1005, "Pairing baseline is not frozen at approval");
+        using var certificate = CreateTestCertificate();
+        var fingerprint = SHA256.HashData(certificate.RawData);
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
+        await using var host = new LanBridgeHost(store, certificate, port); await host.StartAsync();
+        store.Append(Notification(1006));
+        using var socket = MakeSocket(credentials.AccessToken, fingerprint);
+        await socket.ConnectAsync(new Uri($"wss://localhost:{port}/v1/events/stream?after=0&live=true"), CancellationToken.None);
+        var hello = await ReceiveAsync(socket);
+        Check(hello.GetProperty("startCursor").GetInt64() == 1006, "Fresh session replayed pre-connection data");
+        store.Append(Notification(1007));
+        Check((await ReceiveAsync(socket)).GetProperty("event").GetProperty("sequence").GetInt64() == 1007, "Fresh session missed a new event");
+        using (var reconnect = MakeSocket(credentials.AccessToken, fingerprint))
+        {
+            await reconnect.ConnectAsync(new Uri($"wss://localhost:{port}/v1/events/stream?after=1006"), CancellationToken.None);
+            await ReceiveAsync(reconnect);
+            Check((await ReceiveAsync(reconnect)).GetProperty("event").GetProperty("sequence").GetInt64() == 1007, "Same-session reconnect lost offline data");
+        }
+        clock.Advance(TimeSpan.FromHours(25)); store.PruneQueue();
+        Check(store.GetEvents(0).Count == 0 && store.QueueFloor == 1007 && store.HighWatermark == 1007, "Expired queue changed its watermark or retained content");
+        store.Append(Notification(1008));
+        using var stale = MakeSocket(credentials.AccessToken, fingerprint);
+        await stale.ConnectAsync(new Uri($"wss://localhost:{port}/v1/events/stream?after=1005"), CancellationToken.None);
+        Check((await ReceiveAsync(stale)).GetProperty("startCursor").GetInt64() == 1007, "Expired queue did not align a stale cursor");
+        Check((await ReceiveAsync(stale)).GetProperty("event").GetProperty("sequence").GetInt64() == 1008, "Expired queue blocked new delivery");
+        clock.Advance(TimeSpan.FromHours(25)); store.PruneQueue();
+        store.Append(Notification(1009));
+        // An established socket may already have transmitted 1008 before pruning; verify the
+        // stable retention boundary with a fresh authenticated reconnect instead of racing it.
+        using var expiredReconnect = MakeSocket(credentials.AccessToken, fingerprint);
+        await expiredReconnect.ConnectAsync(new Uri($"wss://localhost:{port}/v1/events/stream?after=1007"), CancellationToken.None);
+        Check((await ReceiveAsync(expiredReconnect)).GetProperty("startCursor").GetInt64() == 1008, "Second queue expiry did not align reconnect");
+        Check((await ReceiveAsync(expiredReconnect)).GetProperty("event").GetProperty("sequence").GetInt64() == 1009, "Expiry blocked a fresh event");
+        await host.StopAsync();
+    }
+    using var reopened = new BridgeStore(path, "Session PC", transientQueue: true, clock: clock);
+    Check(reopened.HighWatermark == 1009 && reopened.GetStartSequence(deviceId) == 1005, "Restart lost queue watermark or pairing baseline");
+    Check(reopened.Append(Notification(1010))?.Sequence == 1010, "Pruned queue reused sequence numbers");
+    Console.WriteLine("PASS: transient queue 24h/1000 limit, pairing boundary, live session, reconnect, expiry and restart.");
 }
 
 static async Task TestFreshSourceCompetitionAsync(string directory)

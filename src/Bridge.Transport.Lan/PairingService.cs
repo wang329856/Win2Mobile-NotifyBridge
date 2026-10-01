@@ -4,9 +4,9 @@ using Win2Mobile.Core;
 
 namespace Win2Mobile.Transport.Lan;
 
-public record PendingPairing(string RequestId, string DeviceName, DateTimeOffset ExpiresAt);
+public record PendingPairing(string RequestId, string DeviceName, DateTimeOffset ExpiresAt, string? VerificationCode = null);
 public record PairingRequestResult(string RequestId, string RequestSecret, string Status, DateTimeOffset ExpiresAt);
-public record PairingStatus(string Status, string? DeviceId, string? AccessToken, string ServerId, string ServerName);
+public record PairingStatus(string Status, string? DeviceId, string? AccessToken, string ServerId, string ServerName, NtfyCredentials? Ntfy = null, long StartSequence = 0);
 
 public sealed class PairingService : IDisposable
 {
@@ -26,6 +26,7 @@ public sealed class PairingService : IDisposable
     private DateTimeOffset codeExpiresAt;
     private bool disposed;
     public event EventHandler? Changed;
+    public Func<string, NtfyCredentials?>? RelayCredentials { get; set; }
 
     public PairingService(BridgeStore store, TimeProvider? clock = null)
     {
@@ -54,9 +55,10 @@ public sealed class PairingService : IDisposable
         Changed?.Invoke(this, EventArgs.Empty);
     }
     private static byte[] Hash(string value) => SHA256.HashData(Encoding.UTF8.GetBytes(value));
-    public PairingRequestResult CreateRequest(string pairingCode, string deviceName)
+    public PairingRequestResult CreateRequest(string pairingCode, string deviceName, string? verificationCode = null)
     {
         if (string.IsNullOrWhiteSpace(deviceName) || deviceName.Length > 128 || pairingCode.Length != 64) throw new ArgumentException("Invalid pairing request.");
+        if (verificationCode is not null && (verificationCode.Length != 6 || verificationCode.Any(c => c is < '0' or > '9'))) throw new ArgumentException("Invalid verification code.");
         bool changed = false;
         try
         {
@@ -66,7 +68,7 @@ public sealed class PairingService : IDisposable
                 if (clock.GetUtcNow() >= codeExpiresAt || !CryptographicOperations.FixedTimeEquals(Hash(pairingCode), Hash(code))) throw new UnauthorizedAccessException();
                 if (requests.Values.Count(r => r.Status == "pending") >= 8 || requests.Count >= 128) throw new InvalidOperationException("Too many pairing requests.");
                 var id = Guid.NewGuid().ToString(); var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); var expiresAt = clock.GetUtcNow().AddSeconds(120);
-                requests.Add(id, new Request(new PendingPairing(id, deviceName.Trim(), expiresAt), Hash(secret)));
+                requests.Add(id, new Request(new PendingPairing(id, deviceName.Trim(), expiresAt, verificationCode), Hash(secret)));
                 changed = true;
                 return new PairingRequestResult(id, secret, "pending", expiresAt);
             }
@@ -85,7 +87,8 @@ public sealed class PairingService : IDisposable
                 if (!requests.TryGetValue(requestId, out var request) || !CryptographicOperations.FixedTimeEquals(Hash(secret), request.SecretHash)) return null;
                 var credential = request.Credential;
                 if (credential is not null && !store.IsDeviceActive(credential.DeviceId)) { request.Status = "denied"; request.Credential = credential = null; changed = true; }
-                return new PairingStatus(request.Status, credential?.DeviceId, credential?.AccessToken, store.Identity.ServerId, store.Identity.ServerName);
+                return new PairingStatus(request.Status, credential?.DeviceId, credential?.AccessToken, store.Identity.ServerId, store.Identity.ServerName,
+                    credential is null ? null : RelayCredentials?.Invoke(credential.DeviceId), credential is null ? 0 : store.GetStartSequence(credential.DeviceId));
             }
         }
         finally { if (changed) Changed?.Invoke(this, EventArgs.Empty); }

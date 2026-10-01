@@ -10,15 +10,18 @@ public sealed class BridgeStore : IDisposable
 {
     private readonly object gate = new();
     private readonly SqliteConnection db;
+    private readonly bool transientQueue;
+    private readonly TimeProvider clock;
     private bool disposed;
     public ServerIdentity Identity { get; }
     public event EventHandler? EventsChanged;
     public event EventHandler<DeviceRevokedEventArgs>? DeviceRevoked;
 
-    public BridgeStore(string databasePath, string serverName)
+    public BridgeStore(string databasePath, string serverName, bool transientQueue = false, TimeProvider? clock = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
+        this.transientQueue = transientQueue; this.clock = clock ?? TimeProvider.System;
         if (databasePath != ":memory:") Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(databasePath))!);
         db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate }.ToString());
         db.Open();
@@ -34,10 +37,23 @@ public sealed class BridgeStore : IDisposable
                 token_hash TEXT NOT NULL UNIQUE, acknowledged_sequence INTEGER NOT NULL DEFAULT 0);
             """);
         setup.ExecuteNonQuery();
+        EnsureColumn("events", "captured_at", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn("devices", "start_sequence", "INTEGER NOT NULL DEFAULT 0");
+        using (var migrate = Command("UPDATE events SET captured_at=occurred_at WHERE captured_at=''")) migrate.ExecuteNonQuery();
         using var identity = Command("INSERT OR IGNORE INTO metadata(key,value) VALUES ('serverId',$id);", ("$id", Guid.NewGuid().ToString()));
         identity.ExecuteNonQuery();
         using var read = Command("SELECT value FROM metadata WHERE key='serverId'");
         Identity = new ServerIdentity((string)read.ExecuteScalar()!, serverName);
+        PruneQueue();
+    }
+
+    private void EnsureColumn(string table, string column, string declaration)
+    {
+        using var schema = Command($"PRAGMA table_info({table})");
+        using var rows = schema.ExecuteReader();
+        bool exists = false; while (rows.Read()) if (rows.GetString(1) == column) exists = true;
+        rows.Close();
+        if (!exists) { using var add = Command($"ALTER TABLE {table} ADD COLUMN {column} {declaration}"); add.ExecuteNonQuery(); }
     }
 
     private SqliteCommand Command(string sql, params (string, object)[] parameters)
@@ -47,7 +63,30 @@ public sealed class BridgeStore : IDisposable
         return command;
     }
 
-    public long HighWatermark { get { lock (gate) { Check(); using var cmd = Command("SELECT COALESCE(MAX(sequence),0) FROM events"); return (long)cmd.ExecuteScalar()!; } } }
+    public long HighWatermark { get { lock (gate) { Check(); using var cmd = Command("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='events'),0)"); return (long)cmd.ExecuteScalar()!; } } }
+    public long QueueFloor { get { lock (gate) { Check(); using var cmd = Command("SELECT value FROM metadata WHERE key='queueFloor'"); return long.TryParse(cmd.ExecuteScalar() as string, out var floor) ? floor : 0; } } }
+    public long GetStartSequence(string deviceId)
+    { lock (gate) { Check(); using var cmd = Command("SELECT start_sequence FROM devices WHERE device_id=$id", ("$id", deviceId)); return cmd.ExecuteScalar() is long value ? value : throw new UnauthorizedAccessException(); } }
+
+    public void PruneQueue()
+    {
+        if (!transientQueue) return;
+        lock (gate)
+        {
+            Check();
+            using var cutoff = Command("""
+                SELECT MAX(value) FROM (
+                  SELECT COALESCE(MAX(sequence),0) AS value FROM events WHERE captured_at<=$cutoff
+                  UNION ALL SELECT COALESCE((SELECT sequence-1 FROM events ORDER BY sequence DESC LIMIT 1 OFFSET 999),0));
+                """, ("$cutoff", Stamp(clock.GetUtcNow().AddHours(-24))));
+            var through = (long)cutoff.ExecuteScalar()!;
+            if (through <= QueueFloor) return;
+            using var transaction = db.BeginTransaction();
+            using var remove = Command("DELETE FROM events WHERE sequence<=$through", ("$through", through)); remove.Transaction = transaction; remove.ExecuteNonQuery();
+            using var save = Command("INSERT INTO metadata(key,value) VALUES('queueFloor',$floor) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("$floor", through.ToString(CultureInfo.InvariantCulture))); save.Transaction = transaction; save.ExecuteNonQuery();
+            transaction.Commit();
+        }
+    }
     private void Check() => ObjectDisposedException.ThrowIf(disposed, this);
     private static string Stamp(DateTimeOffset value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
@@ -64,10 +103,10 @@ public sealed class BridgeStore : IDisposable
             if (duplicate.ExecuteScalar() is not null) return null;
             var eventId = Guid.NewGuid().ToString();
             using var cmd = Command("""
-                INSERT INTO events(event_id,source_device_id,source_notification_id,app_id,app_name,title,body,occurred_at)
-                VALUES($event,$server,$source,$app,$name,$title,$body,$time) RETURNING sequence;
+                INSERT INTO events(event_id,source_device_id,source_notification_id,app_id,app_name,title,body,occurred_at,captured_at)
+                VALUES($event,$server,$source,$app,$name,$title,$body,$time,$captured) RETURNING sequence;
                 """, ("$event", eventId), ("$server", Identity.ServerId), ("$source", notification.SourceNotificationId),
-                ("$app", notification.AppId), ("$name", notification.AppName), ("$title", notification.Title), ("$body", notification.Body), ("$time", Stamp(notification.OccurredAt)));
+                ("$app", notification.AppId), ("$name", notification.AppName), ("$title", notification.Title), ("$body", notification.Body), ("$time", Stamp(notification.OccurredAt)), ("$captured", Stamp(clock.GetUtcNow())));
             long sequence;
             try { sequence = (long)cmd.ExecuteScalar()!; }
             catch (SqliteException error) when (error.SqliteErrorCode == 19)
@@ -79,6 +118,7 @@ public sealed class BridgeStore : IDisposable
             }
             result = new BridgeEvent(sequence, eventId, Identity.ServerId, notification.SourceNotificationId, notification.AppId, notification.AppName, notification.Title, notification.Body, notification.OccurredAt.ToUniversalTime());
         }
+        PruneQueue();
         EventsChanged?.Invoke(this, EventArgs.Empty);
         return result;
     }
@@ -100,7 +140,7 @@ public sealed class BridgeStore : IDisposable
     {
         Validate(deviceName, 128, false);
         var id = Guid.NewGuid().ToString(); var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        lock (gate) { Check(); using var cmd = Command("INSERT INTO devices(device_id,device_name,created_at,token_hash) VALUES($id,$name,$time,$hash)", ("$id", id), ("$name", deviceName), ("$time", Stamp(DateTimeOffset.UtcNow)), ("$hash", Hash(token))); cmd.ExecuteNonQuery(); }
+        lock (gate) { Check(); using var cmd = Command("INSERT INTO devices(device_id,device_name,created_at,token_hash,start_sequence,acknowledged_sequence) VALUES($id,$name,$time,$hash,$start,$start)", ("$id", id), ("$name", deviceName), ("$time", Stamp(clock.GetUtcNow())), ("$hash", Hash(token)), ("$start", HighWatermark)); cmd.ExecuteNonQuery(); }
         return new DeviceCredential(id, token);
     }
 
