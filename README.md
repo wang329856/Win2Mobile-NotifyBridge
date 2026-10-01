@@ -4,6 +4,10 @@
 
 当前代码为 v3 重构版本，桌面端与 Android 端已完成本机安装和测试。旧版源码、构建缓存与过时入口已清理；旧实现可从 Git 历史提交 `253534b` 恢复。构建与验证记录见 [开发记录](docs/development-progress.md)。当前安装包仍使用开发签名，正式发布签名尚未配置。
 
+## 下载安装
+
+[v3.0.0 预发布版](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/tag/v3.0.0-preview.1) 提供 [Windows x64 安装套件](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.0.0-preview.1/Win2Mobile-3.0.0-windows-x64.zip) 和 [Android APK](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.0.0-preview.1/Win2Mobile-3.0.0-debug.apk)。桌面套件附公钥证书和安装说明；首次安装需信任开发证书。完整安装、升级与已知限制见 [发布说明](docs/releases/v3.0.0-preview.1.md)。
+
 ## 使用流程
 
 1. 在 Windows 安装带应用包身份的 Win2Mobile MSIX，从开始菜单启动。
