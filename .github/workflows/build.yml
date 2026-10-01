@@ -1,0 +1,55 @@
+name: Build and verify v3
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Backend integration
+        shell: pwsh
+        run: ./scripts/test_backend.ps1
+      - name: Desktop capture state
+        shell: pwsh
+        run: ./scripts/test_windows.ps1
+      - name: Build self-contained desktop
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Package unsigned development MSIX
+        shell: pwsh
+        run: |
+          ./scripts/bootstrap_windows_packaging.ps1
+          ./scripts/package_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Win2Mobile-Windows-x64-development
+          path: |
+            src/Bridge.Windows/bin/publish/win-x64/
+            packaging/windows/output/*.msix
+          if-no-files-found: error
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Prepare Android SDK components
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+      - name: Test, lint and build Kotlin app
+        working-directory: src/android
+        run: bash ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Win2Mobile-Android-debug
+          path: src/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

@@ -1,163 +1,90 @@
-# Win2Mobile-NotifyBridge — Windows 通知转发到手机
+# Win2Mobile NotifyBridge
 
-将 Windows 10/11 的 Toast 通知实时转发到 Android 手机，通过局域网 HTTP 协议传输。
+将 Windows 系统通知转发到同一局域网内的 Android 手机。v3 使用 C# 桌面程序和 Kotlin Android App，以扫码配对、设备授权、加密连接和断线补发为核心。
 
-**PC 端**：C# .NET 6.0 托盘程序，捕获 Windows 系统通知，内建 ntfy 兼容 HTTP 服务器。
+当前代码为 v3 重构版本，桌面端与 Android 端已完成本机安装和测试。旧版源码、构建缓存与过时入口已清理；旧实现可从 Git 历史提交 `253534b` 恢复。构建与验证记录见 [开发记录](docs/development-progress.md)。当前安装包仍使用开发签名，正式发布签名尚未配置。
 
-**手机端**：Flutter App，轮询 ntfy API 接收通知并显示为本地通知。
+## 使用流程
 
-## 系统架构
+1. 在 Windows 安装带应用包身份的 Win2Mobile MSIX，从开始菜单启动。
+2. 点击“授权通知访问”，允许系统通知监听。
+3. 在 Android 安装 Win2Mobile，允许通知，在“电脑”页选择“扫码连接电脑”并扫描电脑显示的二维码。
+4. 在电脑核对设备名称，批准手机配对请求。
+5. 在电脑点击“发送测试通知”，确认手机收到，再使用正常的系统通知转发。
 
-```
-[Windows PC]                          [Android Phone]
-┌──────────────────────┐    HTTP       ┌─────────────────────┐
-│ NotificationForwarder│◄──poll/2s────│ NotifForward App    │
-│                      │   :8080      │                     │
-│ - UserNotification   │              │ - provider/ntfy     │
-│   Listener (WinRT)   │              │ - flutter_local_    │
-│ - SetWinEventHook    │  [ntfy 协议]  │   notifications     │
-│   + UI Automation    │              │ - SharedPreferences │
-│ - HttpListener       │              │                     │
-│   (ntfy server)      │              │                     │
-└──────────────────────┘              └─────────────────────┘
-```
+二维码 120 秒有效，绑定电脑证书指纹。配对完成后使用设备凭据和 HTTPS/WSS。历史消息存入两端数据库，网络恢复后按游标补取；手机对事件 ID 去重，重放历史不成批响铃。
 
-## 快速开始
+电脑窗口提供权限状态、暂停、配对批准/拒绝、设备撤销、近期通知详情、来源过滤与登录启动。手机提供通知历史、设备管理与后台状态诊断。
 
-### 环境要求
+## 系统要求
 
-- **PC**：Windows 10/11，.NET 6.0 SDK（仅开发模式需要）
-- **手机**：Android 8.0+
-- **网络**：手机和电脑连接同一局域网
+- Windows 10 build 19041 或更新版本；推荐仍受支持的 Windows 11。
+- Android 8.0（API 26）或更新版本；工程 targetSdk 35、compileSdk 36。
+- 局域网中两端互相可达，Windows 私人网络允许 TCP 47721 入站。访客 Wi-Fi 或 AP 隔离可能阻止互访。
+- 采集范围是进入 Windows 通知平台的 Toast，应用自绘聊天弹窗和聊天历史不属于首版范围。
 
-### 1. 运行 PC 端
+Android 接收使用原生前台服务并显示持续状态通知。Doze 和手机厂商后台策略仍可能限制网络，应用提供诊断与设置入口；真实息屏行为需要在目标手机验证。Windows 启动以当前通知中心内容为基线，暂停期间不补发新通知。
 
-```powershell
-# 开发模式（需要 .NET 6.0 SDK）
-cd src/NotificationService
-dotnet run
+## 开发与构建
 
-# 构建独立单文件 EXE（无需 .NET Runtime）
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist/
-.\dist\NotificationForwarder.exe
-```
+### Windows
 
-启动后系统托盘出现图标，右键菜单可查看状态或退出。
-浏览器打开 `http://<本机IP>:8080` 可查看 Dashboard。
+需要 .NET 10 SDK。可使用系统 SDK，或准备经过微软官方 SHA512 校验的工作区 SDK：
 
-### 2. 构建手机 App
+    ./scripts/bootstrap_dotnet.ps1
+    ./scripts/build_windows.ps1 -BuildOnly
+    ./scripts/build_windows.ps1
 
-```powershell
-cd src/notification_app
-flutter pub get
-flutter run          # 直接部署到手机
+默认自包含发布目录为 src/Bridge.Windows/bin/publish/win-x64，用户无需另装 .NET Runtime。
 
-# 或构建 APK
-flutter build apk --release
-```
+**直接运行 exe 可以检查界面和局域网服务，获取系统通知仍需正确的应用包身份和授权。** 安装包与签名步骤见 [Windows 打包说明](packaging/windows/README.md)。MSIX 需要受目标机器信任且与 Publisher 匹配的签名；未签名开发包不能直接视为可安装成品。
 
-### 3. 连接配对
+### Android
 
-1. 确保手机和电脑在同一局域网
-2. 打开手机 App，输入 PC 的 IP 地址和端口（默认 8080）
-3. 点击 Test Connection 测试连通性，再点 Connect
-4. 连接成功后显示通知列表
+需要 JDK 21、Android SDK platforms;android-36 和 build-tools;36.0.0。Android 工程独立于 Flutter：
 
-### 4. 测试
+    ./scripts/build_android.ps1
 
-```powershell
-cd src/test_tools
-pip install -r requirements.txt
+也可直接验证：
 
-# 发送单条测试通知
-python send_test_notification.py --title "Hello" --body "World"
+    cd src/android
+    ./gradlew.bat testDebugUnitTest lintDebug assembleDebug
 
-# 批量发送模拟通知
-python batch_send.py
-```
+Android Studio 直接打开 src/android。本机路径通过未跟踪的 local.properties 或 ANDROID_HOME 配置。debug APK 用于开发验证；稳定发布需提供固定 release 签名，私钥与凭据不进入仓库。
 
-## 通知协议 (ntfy)
+### 从旧版迁移
 
-手机 App 轮询 `GET http://<IP>:8080/{topic}/latest` 获取最新通知：
+v3 使用新的配对协议，旧版 IP/topic 配置与订阅不会自动迁移，两端更新后需重新扫码。Android 保留原 applicationId；覆盖安装要求签名与旧 APK 一致。若系统提示签名冲突，请先保留所需旧数据，再由用户卸载旧 App 后安装开发 APK。新版历史使用独立数据库，不导入 Flutter 旧历史。Windows 新包使用独立包身份；请退出旧代理，避免两套程序同时采集。
 
-```json
-{
-  "id": "1",
-  "time": 1750348800,
-  "title": "[QQ] 新消息",
-  "message": "你好，明天的会议...",
-  "topic": "windows-notifications"
-}
-```
+### 后端集成测试
 
-标题格式 `[AppName] Title`，手机端自动解析 App 名和标题。
+    ./scripts/test_backend.ps1
+    ./scripts/test_windows.ps1
 
-## 通知循环防护
+后端 runner 使用临时 SQLite 数据库与真实回环 HTTPS/WSS，验证并发幂等、重启恢复、配对批准/拒绝/过期、鉴权、分页、确认游标、历史实时衔接、重连、撤销与停机取消。桌面状态 runner 验证启动基线、保存失败重试及暂停/权限恢复边界。失败返回非零退出码；这两个 console runner 通过上述脚本执行，dotnet test 不执行它们。
 
-手机 App 收到的通知可能被手机上的转发软件（如 vivo办公套件）回传到 PC，造成死循环。程序内置阻断机制：`BlockedApps` 默认为 `["NotifForward"]`，来自本 App 的回传通知直接丢弃。
+使用上述新版构建、测试和完整 MSIX 打包入口。桌面代理运行在用户会话中。
 
 ## 项目结构
 
-```
-├── src/
-│   ├── NotificationService/         # C# PC 端服务
-│   │   ├── Program.cs               # 入口
-│   │   ├── MainForm.cs              # 托盘窗口
-│   │   ├── BlacklistForm.cs         # 黑名单管理对话框
-│   │   ├── Models/
-│   │   │   └── NotificationData.cs  # 数据模型
-│   │   ├── Services/
-│   │   │   ├── AppSettings.cs       # 配置
-│   │   │   ├── INotificationCaptureService.cs
-│   │   │   ├── NotificationCaptureService.cs  # 通知捕获
-│   │   │   ├── NtfyServerService.cs           # ntfy HTTP 服务器
-│   │   │   └── NtfyForwarderService.cs        # 外部 ntfy 转发
-│   │   ├── Native/
-│   │   │   ├── Win32Api.cs          # P/Invoke
-│   │   │   └── UIAutomationHelper.cs # UI Automation
-│   │   └── Resources/
-│   │       └── app.ico              # 托盘图标
-│   ├── notification_app/            # Flutter 手机 App
-│   │   └── lib/
-│   │       ├── main.dart
-│   │       ├── models/notification_data.dart
-│   │       ├── providers/notification_provider.dart
-│   │       ├── screens/home_screen.dart
-│   │       ├── services/ntfy_service.dart
-│   │       └── widgets/notification_card.dart
-│   └── test_tools/                  # Python 测试工具
-├── scripts/                         # 构建脚本
-├── dist/                            # 构建产物
-└── appsettings.json                 # 运行时配置
-```
+    src/
+      Bridge.Core/              # SQLite 发件箱、设备与事件模型
+      Bridge.Transport.Lan/     # TLS、配对、认证与事件流
+      Bridge.Windows/           # WPF、托盘与官方通知监听
+      android/                  # Kotlin、Compose、Room 与原生接收
+    tests/Bridge.IntegrationTests/
+    packaging/windows/
+    scripts/
+    docs/
 
-## 配置 (appsettings.json)
+协议见 [局域网协议 v1](docs/protocol-v1.md)，路线见 [重构评估](docs/refactor-assessment-2026-09-30.md)。
+双设备安装、真实 Toast、断网补发和息屏验证见 [实机验收](docs/device-validation.md)。
 
-```json
-{
-  "AppSettings": {
-    "NtfyPort": 8080,
-    "NtfyTopic": "windows-notifications",
-    "DebounceWindowMs": 300,
-    "BlockedApps": ["NotifForward"]
-  }
-}
-```
+Windows 数据使用当前用户 LocalApplicationData/Win2Mobile，包含数据库、设置和受 DPAPI 保护的服务私钥。Windows 只存设备 token 哈希，Android 由 Keystore 加密存储凭据；二维码和 token 不应写入日志。
 
-## 技术栈
+## 后续扩展
 
-| 组件 | 技术 | 核心依赖 |
-|------|------|----------|
-| PC 服务 | C# .NET 6.0 WinForms | Microsoft.Extensions.*, Serilog, Interop.UIAutomationClient |
-| 手机 App | Flutter 3.x | provider, http, flutter_local_notifications, shared_preferences |
-| 测试工具 | Python 3 | winotify |
-
-## 注意事项
-
-- **Session 0 隔离**：程序以用户会话托盘程序运行（非 Windows 服务），因为 Session 0 无法监听用户 UI 事件
-- **防火墙**：首次运行需放行端口 8080。以管理员运行 `netsh http add urlacl url=http://+:%PORT%/ user=Everyone` 可避免权限问题
-- **通知捕获**：主路径 `UserNotificationListener` 需 MSIX/sparse package 授予权限，否则自动回退到 `SetWinEventHook` + UI Automation
-- **开机自启**：将编译好的 EXE 添加到 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+采集与传输已分离，局域网稳定后可增加真实 ntfy 发布适配器或云中继；当前开发版不提供公网中继或推送服务。
 
 ## License
 

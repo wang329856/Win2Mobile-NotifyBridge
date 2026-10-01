@@ -2,6 +2,17 @@
 dist/
 **/bin/
 **/obj/
+.tools/
+.artifacts/
+**/local.properties
+**/*.keystore
+**/*.jks
+**/.gradle/
+**/.kotlin/
+**/captures/
+*.pfx
+*.p12
+packaging/windows/output/
 
 # IDE
 .vs/
@@ -10,23 +21,9 @@ dist/
 *.user
 *.suo
 
-# Flutter
-**/android/.gradle/
-**/android/app/build/
-**/android/build/
-**/.dart_tool/
-**/.packages
-**/.pub/
+# Gradle build outputs
 **/build/
 *.iml
-.flutter-plugins
-.flutter-plugins-dependencies
-
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
 
 # Logs
 logs/
