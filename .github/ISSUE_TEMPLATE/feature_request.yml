@@ -1,0 +1,45 @@
+name: 功能建议
+description: 描述使用场景和希望改进的体验
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索是否已有相同建议。优先描述具体场景与问题，示例内容请脱敏。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与当前问题
+      description: 谁会在什么情况下遇到这个问题？目前需要怎样绕过？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望的行为
+      description: 改进后应该如何操作、看到什么结果？
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案（可选）
+      description: 已尝试哪些做法，为什么还不够？
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 涉及范围
+      options:
+        - Windows
+        - Android
+        - 局域网连接
+        - 跨网 / 自建中转
+        - 安装 / 文档
+        - 多端体验
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充说明（可选）
+      description: 可提供已脱敏的示例或草图，不上传真实通知或凭据。

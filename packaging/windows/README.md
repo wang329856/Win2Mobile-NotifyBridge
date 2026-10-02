@@ -1,5 +1,7 @@
 # Windows 打包与安装
 
+普通用户下载安装请先看 [安装与升级教程](../../docs/installation.md)；本文面向源码构建与打包。数据处理见 [隐私说明](../../PRIVACY.md)，用户可见变化见 [更新日志](../../CHANGELOG.md)。
+
 Windows 10 2004（19041）或更新版本；.NET 10 SDK 用于构建。发布内容自包含，不要求目标机器预装 .NET。采集通过系统 UserNotificationListener，必须安装 MSIX 后从开始菜单启动；直接启动发布 exe 会提示缺少身份。桌面代理不安装 Windows 服务。
 
 ```powershell
