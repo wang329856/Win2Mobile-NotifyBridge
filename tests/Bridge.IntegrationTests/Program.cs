@@ -43,6 +43,7 @@ static async Task RunAsync(string directory)
     }
     var database = Path.Combine(directory, "bridge.db"); string serverId; string persistedToken; string persistedDevice; string firstEventId;
     await TestSessionQueueAsync(directory);
+    PrivacyRetentionTests.Run(directory);
     await TestFreshSourceCompetitionAsync(directory);
     TestExpiryNotifications(directory);
     using var certificate = OperatingSystem.IsWindows() ? CertificateManager.GetOrCreate(directory) : CreateTestCertificate();

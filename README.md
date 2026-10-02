@@ -2,13 +2,15 @@
 
 将 Windows 系统通知转发到已授权的 Android 手机。使用 C# 桌面程序和 Kotlin Android App，支持局域网直连，以及可选的 ntfy 跨网络端到端加密中转，无需租用服务器。
 
-当前源码为 3.1.1，提供两端新版界面、统一品牌图标、竖屏扫码、通知栏应用来源、手机暂停／继续、滑动删除撤销及可信局域网优先的自动连接。改版截图与验证范围见 [UI 改版验收记录](docs/ui-redesign-2026-10-02.md)，正式构建及签名说明见 [3.1.1 打包记录](docs/releases/v3.1.1.md)。旧实现可从 Git 历史提交 `253534b` 恢复。Android 已配置独立 release 签名；Windows 沿用现有本地签名证书，首次在其他电脑安装需自行核验并信任证书。
+当前源码为 3.1.2，提供两端新版界面、统一品牌图标、竖屏扫码、通知栏应用来源、手机暂停／继续、滑动删除撤销及可信局域网优先的自动连接。改版截图与验证范围见 [UI 改版验收记录](docs/ui-redesign-2026-10-02.md)，正式构建及签名说明见 [3.1.2 打包记录](docs/releases/v3.1.2.md)。旧实现可从 Git 历史提交 `253534b` 恢复。Android 已配置独立 release 签名；Windows 沿用现有本地签名证书，首次在其他电脑安装需自行核验并信任证书。
 
 Windows 仅提供具有系统通知采集权限的安装版，显示名称统一为 `Win2Mobile`。安装套件自带 .NET 运行时，无需另行安装 .NET。
 
+3.1.2 修复数据库过期正文、Android 通知栏已删除消息和 Windows 失效详情的残留问题；修复方式及验证边界见 [隐私修复记录](docs/security-fixes-2026-10-02.md)。
+
 ## 下载安装
 
-[v3.1.1 正式版](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/tag/v3.1.1) 提供 [Windows 安装套件](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.1/Win2Mobile-Setup-x64.zip)、[Windows MSIX](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.1/Win2Mobile-Setup-x64.msix) 和 [Android 正式 APK](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.1/Win2Mobile-3.1.1-release.apk)。Windows 套件附公钥证书和安装说明，新电脑须核验并信任现有自签名证书。Android 正式签名无法覆盖旧 debug APK，卸载前应保留所需旧数据。完整安装、升级与验证范围见 [发布说明](docs/releases/v3.1.1.md)。
+[v3.1.2 正式版](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/tag/v3.1.2) 提供 [Windows 安装套件](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.2/Win2Mobile-Setup-x64.zip)、[Windows MSIX](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.2/Win2Mobile-Setup-x64.msix) 和 [Android 正式 APK](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.2/Win2Mobile-3.1.2-release.apk)。Windows 套件附公钥证书和安装说明，新电脑须核验并信任现有自签名证书。Android 正式签名无法覆盖旧 debug APK，卸载前应保留所需旧数据。完整安装、升级与验证范围见 [发布说明](docs/releases/v3.1.2.md)。
 
 ## 使用流程
 

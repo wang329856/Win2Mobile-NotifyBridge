@@ -1,4 +1,7 @@
 using Win2Mobile.Windows;
+using Win2Mobile.Core;
+using System.Collections.ObjectModel;
+using System.Windows.Controls;
 
 static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 var tracker = new NotificationSnapshotTracker();
@@ -50,4 +53,40 @@ using (var store = new Win2Mobile.Core.BridgeStore(":memory:", "Queue verificati
     Check(items.Count == 1000 && items[0].Sequence == 101 && items[^1].Sequence == 1100, "Desktop must read the latest 1000 events through legal 200-item pages.");
     Check(items.Select(x => x.EventId).Distinct().Count() == items.Count, "Desktop paging must not duplicate events.");
     Console.WriteLine("PASS: desktop queue reader loads 1000 recent events through real storage page limits, in order without duplicates.");
+}
+
+Exception? detailFailure = null;
+var detailThread = new Thread(() =>
+{
+    try
+    {
+        foreach (bool expire in new[] { true, false })
+        {
+            var clock = new DetailClock();
+            using var store = new BridgeStore(":memory:", "Detail PC", true, clock);
+            var sensitive = store.Append(new("sensitive", "app", "App", "Sensitive title", "PRIVATE_DETAIL_MARKER", clock.GetUtcNow()))!;
+            var items = new ObservableCollection<BridgeEvent> { sensitive };
+            var list = new ListBox { ItemsSource = items };
+            var details = new TextBox(); var copy = new Button { IsEnabled = false };
+            list.SelectionChanged += (_, _) => DesktopNotificationDetails.Update(list.SelectedItem as BridgeEvent, details, copy);
+            list.SelectedItem = sensitive;
+            Check(details.Text.Contains("PRIVATE_DETAIL_MARKER") && copy.IsEnabled, "Selected message must be readable and copyable.");
+            if (expire) { clock.Advance(TimeSpan.FromHours(25)); store.PruneQueue(); }
+            else for (int i = 0; i < 1000; i++) store.Append(new("evict-" + i, "app", "App", "Title", "Body", clock.GetUtcNow()));
+            foreach (var item in items.Where(x => x.Sequence <= store.QueueFloor).ToArray()) items.Remove(item);
+            Check(list.SelectedItem is null && !details.Text.Contains("PRIVATE_DETAIL_MARKER") && !copy.IsEnabled && !details.CanUndo,
+                "Expired/evicted selection must clear body, disable copying and discard undo content.");
+        }
+    }
+    catch (Exception error) { detailFailure = error; }
+});
+detailThread.SetApartmentState(ApartmentState.STA); detailThread.Start(); detailThread.Join();
+if (detailFailure is not null) throw detailFailure;
+Console.WriteLine("PASS: real WPF selection removal clears details, copy and undo state for expiry and capacity eviction.");
+
+sealed class DetailClock : TimeProvider
+{
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    public override DateTimeOffset GetUtcNow() => now;
+    public void Advance(TimeSpan duration) => now += duration;
 }

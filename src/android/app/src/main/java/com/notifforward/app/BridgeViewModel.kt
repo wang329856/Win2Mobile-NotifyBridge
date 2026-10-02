@@ -16,6 +16,14 @@ import android.os.Build
  class BridgeViewModel @JvmOverloads constructor(application: Application, private val database: BridgeDatabase = (application as BridgeApplication).db, private val preview: Boolean = false) : AndroidViewModel(application) {
     private val app = application as BridgeApplication
     private val dao get() = database.dao()
+    private val retention by lazy {
+        if (!preview) app.notificationRetention else NotificationRetention(object : MessageNotificationSink {
+            override fun activeMessages() = emptyList<Pair<String, String>>()
+            override fun cancelEvent(serverId: String, eventId: String) {}
+            override fun cancelComputer(serverId: String) {}
+            override fun cancelMessages() {}
+        })
+    }
     private val _pairing = MutableStateFlow(PairingUiState())
     val pairing = _pairing.asStateFlow()
     val computers = dao.observeComputers().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -41,16 +49,16 @@ import android.os.Build
     fun resume() { if (preview) receiving.value = true else BridgeService.start(app) }
     fun pause() { if (preview) receiving.value = false else BridgeService.pause(app) }
     fun newSession() { selected.value = null; if (preview) viewModelScope.launch { dao.beginSession(); receiving.value = true } else BridgeService.start(app, newSession = true) }
-    fun clear() = viewModelScope.launch { dao.clearHistory(); selected.value = null; messages.send("本次消息已清空，接收进度保留") }
+    fun clear() = viewModelScope.launch { retention.clear { dao.clearHistory() }; selected.value = null; messages.send("本次消息已清空，接收进度保留") }
     fun focus(serverId: String, eventId: String) = viewModelScope.launch {
         app.initialized.await(); selected.value = dao.savedEvent(serverId, eventId)
         if (selected.value == null) messages.send("这条通知已删除或不在本次列表中")
     }
     fun delete(item: SavedNotification, complete: (DeletedNotification?) -> Unit) = viewModelScope.launch {
-        val ticket = dao.deleteWithUndo(item); if (selected.value == item) selected.value = null; complete(ticket)
+        val ticket = retention.delete(item.serverId, item.eventId) { dao.deleteWithUndo(item) }; if (selected.value == item) selected.value = null; complete(ticket)
     }
     fun undo(ticket: DeletedNotification) = viewModelScope.launch {
-        if (!dao.restoreNotification(ticket)) messages.send("本次接收已变化，无法恢复这条消息")
+        if (!retention.restore { dao.restoreNotification(ticket) }) messages.send("本次接收已变化，无法恢复这条消息")
     }
     fun mode(id: String, mode: ConnectionMode) = viewModelScope.launch {
         if (!preview && mode == ConnectionMode.RELAY && app.tokens.get(id + ":ntfy") == null) { messages.send("请先在电脑开启跨网络推送，再重新配对获取密钥"); return@launch }
@@ -72,9 +80,11 @@ import android.os.Build
         } catch (e: Exception) { complete(e.message ?: "地址无效") }
     }
     fun remove(id: String) = viewModelScope.launch {
-        dao.removeComputer(id); if (!preview) { app.tokens.remove(id); app.tokens.remove(id + ":ntfy") }
+        val cleanup = retention.removeComputer(id, removeContent = { dao.removeComputer(id) },
+            removeCredentials = { if (!preview) { app.tokens.remove(id); app.tokens.remove(id + ":ntfy") } })
+        if (selected.value?.serverId == id) selected.value = null
         if (app.preferences.getBoolean("running", false)) resume()
-        messages.send("电脑已移除；电脑端授权可在设备页撤销")
+        messages.send(if (cleanup.isSuccess) "电脑已移除；电脑端授权可在设备页撤销" else "电脑已移除，系统消息已撤回；部分凭据清理失败，请检查手机存储空间。电脑端可撤销原授权")
     }
     fun dismissPairing() {
         if (_pairing.value.busy) pairJob?.cancel() else _pairing.value = PairingUiState()
@@ -110,10 +120,13 @@ import android.os.Build
                 val waiting: (String) -> Unit = { _pairing.value = PairingUiState(true, it) }
                 val result = remoteClient?.pair(name, waiting) ?: client!!.pair(payload, name, waiting)
                 val relay = result.ntfy?.validate()
-                if (relay != null) app.tokens.put(payload.serverId + ":ntfy", wireJson.encodeToString(relay)) else app.tokens.remove(payload.serverId + ":ntfy")
-                app.tokens.put(payload.serverId, result.accessToken!!)
-                dao.savePairing(Computer(payload.serverId, result.serverName, payload.baseUrl.trimEnd('/'), payload.certificateSha256, result.deviceId!!,
-                    cursor = result.startSequence.also { require(it >= 0) }, remoteEnabled = relay != null, relaySequence = relay?.startSequence ?: 0))
+                retention.replaceComputer(payload.serverId) {
+                    if (relay != null) app.tokens.put(payload.serverId + ":ntfy", wireJson.encodeToString(relay)) else app.tokens.remove(payload.serverId + ":ntfy")
+                    app.tokens.put(payload.serverId, result.accessToken!!)
+                    dao.savePairing(Computer(payload.serverId, result.serverName, payload.baseUrl.trimEnd('/'), payload.certificateSha256, result.deviceId!!,
+                        cursor = result.startSequence.also { require(it >= 0) }, remoteEnabled = relay != null, relaySequence = relay?.startSequence ?: 0))
+                }
+                if (selected.value?.serverId == payload.serverId) selected.value = null
                 _pairing.value = PairingUiState(message = "配对成功，正在接收 " + result.serverName + " 的新通知")
                 resume()
             } catch (_: TimeoutCancellationException) { _pairing.value = PairingUiState(message = "配对超时，请刷新电脑二维码后重试") }

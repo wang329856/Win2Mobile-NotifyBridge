@@ -350,6 +350,8 @@ public partial class MainWindow : Window
         try
         {
             foreach (var item in _recent.Where(x => x.Sequence <= _store.QueueFloor).ToArray()) _recent.Remove(item);
+            ServiceStatus.Text = "局域网 HTTPS / WSS 服务已启动 · 端口 47721 · " + _store.Identity.ServerName +
+                (_store.StorageCleanupPending ? " · 隐私清理等待其他数据库读取结束" : "");
             string? pendingId = (PendingList.SelectedItem as PendingPairing)?.RequestId;
             string? remotePendingId = (RemotePendingList.SelectedItem as PendingPairing)?.RequestId;
             string? deviceId = (DeviceList.SelectedItem as PairedDevice)?.DeviceId;
@@ -406,8 +408,8 @@ public partial class MainWindow : Window
     }
     private void RecentChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (RecentList.SelectedItem is BridgeEvent item)
-            NotificationDetails.Text = $"{item.AppName}\n应用 ID：{item.AppId}\n本地时间：{item.OccurredAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n{item.Title}\n\n{item.Body}";
+        if (NotificationDetails is not null && CopyNoticeButton is not null)
+            DesktopNotificationDetails.Update(RecentList.SelectedItem as BridgeEvent, NotificationDetails, CopyNoticeButton);
     }
     private async Task RefreshStartupAsync()
     {

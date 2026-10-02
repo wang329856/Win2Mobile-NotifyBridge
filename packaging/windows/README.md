@@ -8,7 +8,7 @@ Windows 10 2004（19041）或更新版本；.NET 10 SDK 用于构建。发布内
 ./scripts/package_windows.ps1
 # 有匹配 Publisher 的受信任代码签名证书后：
 ./scripts/package_windows.ps1 -Publisher 'CN=Win2Mobile' -SigningCertificateThumbprint '<40 位证书指纹>'
-./packaging/windows/Install-Win2Mobile.ps1 -PackagePath './packaging/windows/output/Win2Mobile-3.1.1.1-x64.msix'
+./packaging/windows/Install-Win2Mobile.ps1 -PackagePath './packaging/windows/output/Win2Mobile-3.1.2.0-x64.msix'
 ```
 
 MakeAppx 和 SignTool 从 PATH 或 Windows SDK `bin/<版本>/x64` 中查找，也可分别指定路径。工具缺失、构建失败、签名失败、信任验证失败均会停止并明确报错。默认只生成未签名 MSIX；不创建、不导入也不默认信任证书。签名证书应位于当前用户 My 证书存储，具有私钥、代码签名用途和与 Publisher 完全一致的 Subject。测试自签名证书的信任必须由操作者核对后自行处理；本项目脚本不更改信任库。

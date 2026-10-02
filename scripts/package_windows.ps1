@@ -6,7 +6,7 @@ param(
     [string]$SignToolPath,
     [uri]$TimestampServer = 'http://timestamp.digicert.com',
     [string]$Publisher = 'CN=Win2Mobile',
-    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '3.1.1.1',
+    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '3.1.2.0',
     [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$SigningCertificateThumbprint
 )
 $ErrorActionPreference = 'Stop'

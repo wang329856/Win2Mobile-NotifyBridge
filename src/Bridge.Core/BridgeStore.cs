@@ -13,6 +13,8 @@ public sealed class BridgeStore : IDisposable
     private readonly bool transientQueue;
     private readonly TimeProvider clock;
     private bool disposed;
+    private bool privacyCleanupPending;
+    public bool StorageCleanupPending { get { lock (gate) { return privacyCleanupPending; } } }
     public ServerIdentity Identity { get; }
     public event EventHandler? EventsChanged;
     public event EventHandler<DeviceRevokedEventArgs>? DeviceRevoked;
@@ -23,10 +25,10 @@ public sealed class BridgeStore : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
         this.transientQueue = transientQueue; this.clock = clock ?? TimeProvider.System;
         if (databasePath != ":memory:") Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(databasePath))!);
-        db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate }.ToString());
+        db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         db.Open();
         using var setup = Command("""
-            PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
+            PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;
             CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
@@ -44,7 +46,24 @@ public sealed class BridgeStore : IDisposable
         identity.ExecuteNonQuery();
         using var read = Command("SELECT value FROM metadata WHERE key='serverId'");
         Identity = new ServerIdentity((string)read.ExecuteScalar()!, serverName);
-        PruneQueue();
+        // Existing databases may have deleted plaintext in free pages or old WAL frames.
+        // Only record this migration after both compaction and truncation have succeeded.
+        try
+        {
+            using var privacyVersion = Command("SELECT value FROM metadata WHERE key='privacyCleanupVersion'");
+            if (privacyVersion.ExecuteScalar() as string != "1")
+            {
+                using (var compact = Command("VACUUM")) compact.ExecuteNonQuery();
+                privacyCleanupPending = true;
+                if (!TryTruncateWal()) throw new IOException("数据库隐私清理被其他读取连接阻塞，请关闭其他实例后重试。");
+                using (var version = Command("INSERT INTO metadata(key,value) VALUES('privacyCleanupVersion','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value")) version.ExecuteNonQuery();
+                privacyCleanupPending = true;
+            }
+            privacyCleanupPending = true;
+            PruneQueue();
+            TryTruncateWal();
+        }
+        catch { db.Dispose(); throw; }
     }
 
     private void EnsureColumn(string table, string column, string declaration)
@@ -80,12 +99,29 @@ public sealed class BridgeStore : IDisposable
                   UNION ALL SELECT COALESCE((SELECT sequence-1 FROM events ORDER BY sequence DESC LIMIT 1 OFFSET 999),0));
                 """, ("$cutoff", Stamp(clock.GetUtcNow().AddHours(-24))));
             var through = (long)cutoff.ExecuteScalar()!;
-            if (through <= QueueFloor) return;
+            if (through <= QueueFloor) { TryTruncateWal(); return; }
             using var transaction = db.BeginTransaction();
             using var remove = Command("DELETE FROM events WHERE sequence<=$through", ("$through", through)); remove.Transaction = transaction; remove.ExecuteNonQuery();
             using var save = Command("INSERT INTO metadata(key,value) VALUES('queueFloor',$floor) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("$floor", through.ToString(CultureInfo.InvariantCulture))); save.Transaction = transaction; save.ExecuteNonQuery();
             transaction.Commit();
+            privacyCleanupPending = true;
+            TryTruncateWal();
         }
+    }
+    private bool TryTruncateWal()
+    {
+        if (!privacyCleanupPending) return true;
+        using (var noWait = Command("PRAGMA busy_timeout=0")) noWait.ExecuteNonQuery();
+        try
+        {
+            using var checkpoint = Command("PRAGMA wal_checkpoint(TRUNCATE)");
+            using var result = checkpoint.ExecuteReader();
+            // SQLite reports busy as a result row, not an exception. Keep the pending
+            // flag and retry on the next prune rather than claiming the WAL was erased.
+            privacyCleanupPending = !result.Read() || result.GetInt64(0) != 0;
+            return !privacyCleanupPending;
+        }
+        finally { using var restoreWait = Command("PRAGMA busy_timeout=5000"); restoreWait.ExecuteNonQuery(); }
     }
     private void Check() => ObjectDisposedException.ThrowIf(disposed, this);
     private static string Stamp(DateTimeOffset value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

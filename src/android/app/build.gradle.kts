@@ -9,7 +9,7 @@ android {
     namespace = "com.notifforward.app"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
-    defaultConfig { applicationId = "com.notifforward.app"; minSdk = 26; targetSdk = 35; versionCode = 30101; versionName = "3.1.1" }
+    defaultConfig { applicationId = "com.notifforward.app"; minSdk = 26; targetSdk = 35; versionCode = 30102; versionName = "3.1.2" }
     val releaseStore = System.getenv("WIN2MOBILE_ANDROID_KEYSTORE")
     val releaseAlias = System.getenv("WIN2MOBILE_ANDROID_KEY_ALIAS")
     val releaseStorePassword = System.getenv("WIN2MOBILE_ANDROID_STORE_PASSWORD")

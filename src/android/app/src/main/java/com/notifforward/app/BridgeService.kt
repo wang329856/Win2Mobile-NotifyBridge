@@ -59,7 +59,7 @@ class BridgeService : Service() {
                     if (newSessionRequested.getAndSet(false)) {
                         owners.values.forEach { it.job.cancel() }
                         owners.values.forEach { it.job.join(); it.changes.close() }; owners.clear()
-                        dao.beginSession(); notices.cancelAll()
+                        app.notificationRetention.clear { dao.beginSession() }
                     }
                     if (!app.preferences.getBoolean("running", false)) {
                         val stoppingId = lastStartId
@@ -187,7 +187,7 @@ class BridgeService : Service() {
                             "checkpoint" -> { dao.alignCursor(id, state.resumeCursor); client.ack(dao.computer(id)?.cursor ?: error("电脑已移除"), token) }
                             "event" -> {
                                 val event = frame.event!!
-                                EventDelivery.deliver(state.isReplay(event.sequence), save = { dao.accept(id, event) }, display = { showEvent(id, event) },
+                                app.notificationRetention.deliver(state.isReplay(event.sequence), save = { dao.accept(id, event) }, display = { showEvent(id, event) },
                                     acknowledge = { client.ack(dao.computer(id)?.cursor ?: error("电脑已移除"), token) })
                             }
                         }
@@ -209,7 +209,7 @@ class BridgeService : Service() {
                 connected = { dao.sessionConnected(id, Instant.now().toString()); dao.state(id, "中转已连接", "中转连通不代表电脑在线"); connected() },
                 accept = { message ->
                     val event = runCatching { message.message?.let { assembler.accept(it) } }.getOrNull()
-                    if (event != null) EventDelivery.deliver(Instant.parse(event.occurredAt).isBefore(connectedAt),
+                    if (event != null) app.notificationRetention.deliver(Instant.parse(event.occurredAt).isBefore(connectedAt),
                         save = { dao.acceptRelay(id, event, message.id) }, display = { showEvent(id, event) }, acknowledge = {})
                 }, liveOnly = pc.sessionPending)
         } finally { client.close() }
@@ -229,7 +229,7 @@ class BridgeService : Service() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
         val channel = if (app.preferences.getBoolean("sound", true)) "bridge_messages" else "bridge_silent"
         val source = NotificationPresentation.source(event.appName, event.appId)
-        notices.notify(id + ":" + event.eventId, 2, NotificationCompat.Builder(this, channel).setSmallIcon(R.drawable.ic_notification)
+        notices.notify(id + ":" + event.eventId, AndroidMessageNotifications.MESSAGE_ID, NotificationCompat.Builder(this, channel).setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(NotificationPresentation.title(event.appName, event.appId, event.title))
             .setContentText(event.body).setSubText("来自电脑 · $source")
             .setStyle(NotificationCompat.BigTextStyle().bigText(event.body)).setAutoCancel(true).setContentIntent(contentIntent(id, event.eventId)).build())
