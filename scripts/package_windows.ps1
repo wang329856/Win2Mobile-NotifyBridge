@@ -1,11 +1,11 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$PublishDirectory,
     [string]$OutputDirectory,
     [string]$MakeAppxPath,
     [string]$SignToolPath,
     [string]$Publisher = 'CN=Win2Mobile',
-    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '3.0.0.0',
+    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '3.1.1.1',
     [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$SigningCertificateThumbprint
 )
 $ErrorActionPreference = 'Stop'

@@ -42,3 +42,12 @@ Check(!tracker.ShouldCapture("unreadable-during-permission-baseline", now.AddSec
 Check(tracker.ShouldCapture("fresh-after-permission", now.AddSeconds(5), false, noBoundary), "New notifications after permission recovery must be captured.");
 tracker.CompleteSnapshot();
 Console.WriteLine("PASS: desktop baseline, deduplication, failed-save retry, per-item failure isolation, pause/resume boundary, permission recovery.");
+using (var store = new Win2Mobile.Core.BridgeStore(":memory:", "Queue verification"))
+{
+    for (int i = 0; i < 1100; i++)
+        store.Append(new("ui-queue-" + i, "QueueTest", "QueueTest", "Title", "Body", now));
+    var items = DesktopQueueReader.ReadRecent(store.GetEvents, store.HighWatermark);
+    Check(items.Count == 1000 && items[0].Sequence == 101 && items[^1].Sequence == 1100, "Desktop must read the latest 1000 events through legal 200-item pages.");
+    Check(items.Select(x => x.EventId).Distinct().Count() == items.Count, "Desktop paging must not duplicate events.");
+    Console.WriteLine("PASS: desktop queue reader loads 1000 recent events through real storage page limits, in order without duplicates.");
+}

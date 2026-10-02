@@ -7,6 +7,7 @@ import java.io.IOException
 
 /** Stable boundary for future transports. This version supplies only the LAN implementation. */
 interface BridgeTransport : AutoCloseable {
+    suspend fun probe(serverId: String, token: String) { throw java.io.IOException("此连接不支持状态检查") }
     suspend fun pair(payload: PairPayload, deviceName: String, waiting: (String) -> Unit): PairResult
     fun stream(cursor: Long, token: String, listener: WebSocketListener, liveOnly: Boolean = false): WebSocket
     suspend fun ack(sequence: Long, token: String)

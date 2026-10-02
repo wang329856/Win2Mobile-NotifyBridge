@@ -10,6 +10,7 @@ internal sealed class DesktopSettings
     public HashSet<string> BlockedAppIds { get; set; } = new(StringComparer.Ordinal);
     public string? SelectedAddress { get; set; }
     public bool Paused { get; set; }
+    public string ThemeMode { get; set; } = "System";
     public bool NtfyEnabled { get; set; }
     public string NtfyServerUrl { get; set; } = "https://ntfy.sh";
     public string NtfyProxyUrl { get; set; } = "";

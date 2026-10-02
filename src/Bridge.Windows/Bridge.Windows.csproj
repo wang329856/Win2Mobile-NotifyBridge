@@ -8,11 +8,17 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>Win2Mobile</AssemblyName>
+    <Version>3.1.1</Version>
+    <FileVersion>3.1.1.1</FileVersion>
+    <AssemblyVersion>3.1.1.1</AssemblyVersion>
     <RootNamespace>Win2Mobile.Windows</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/Win2Mobile.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets/Win2Mobile.ico" />
+    <Resource Include="Assets/BrandLogo.png" />
     <ProjectReference Include="../Bridge.Core/Bridge.Core.csproj" />
     <ProjectReference Include="../Bridge.Transport.Lan/Bridge.Transport.Lan.csproj" />
     <ProjectReference Include="../Bridge.Transport.Ntfy/Bridge.Transport.Ntfy.csproj" />

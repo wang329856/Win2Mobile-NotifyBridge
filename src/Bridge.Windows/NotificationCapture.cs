@@ -24,6 +24,7 @@ internal sealed class NotificationCapture : IDisposable
     public event Func<CapturedNotification, bool>? Notification;
     public event Action<string>? Status;
     public event Action<string, string>? AppDiscovered;
+    public bool HasAccess { get; private set; }
     public bool Paused
     {
         get => _paused;
@@ -49,13 +50,14 @@ internal sealed class NotificationCapture : IDisposable
         _dispatcher.VerifyAccess();
         if (!HasPackageIdentity)
         {
-            Status?.Invoke("缺少应用包身份：请使用 packaging/windows 中的安装入口安装 MSIX，再从开始菜单启动。直接运行 exe 无法请求通知权限。");
+            Status?.Invoke("当前为免安装运行，可连接手机和发送测试；自动采集 Windows 系统通知需要使用安装版并授权。");
             return;
         }
         try
         {
             _listener ??= UserNotificationListener.Current;
             var access = requestPermission ? await _listener.RequestAccessAsync() : _listener.GetAccessStatus();
+            HasAccess = access == UserNotificationListenerAccessStatus.Allowed;
             if (access != UserNotificationListenerAccessStatus.Allowed)
             {
                 _snapshots.ResetBaseline();
@@ -84,12 +86,15 @@ internal sealed class NotificationCapture : IDisposable
         {
             if (_listener.GetAccessStatus() != UserNotificationListenerAccessStatus.Allowed)
             {
+                HasAccess = false;
                 _snapshots.ResetBaseline();
                 Status?.Invoke("通知权限不可用；请在 Windows 设置中允许访问，再点击授权。采集已停止。");
                 return;
             }
             if (!_subscribed) { _listener.NotificationChanged += OnNotificationChanged; _subscribed = true; }
+            HasAccess = true;
             var notifications = await _listener.GetNotificationsAsync(NotificationKinds.Toast);
+            HasAccess = true;
             if (_disposed) return;
             _snapshots.BeginSnapshot(DateTimeOffset.UtcNow);
             int failures = 0;

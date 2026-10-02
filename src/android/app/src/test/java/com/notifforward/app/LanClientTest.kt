@@ -125,4 +125,19 @@ class LanClientTest {
         try { client().ack(4, "token"); fail("Regressed acknowledgement accepted") }
         catch (_: IllegalArgumentException) { }
     }
+    @Test fun trustedProbeChecksIdentityAndAuthorizationUsingReadOnlyGets() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"protocolVersion":1,"serverId":"$identity","serverName":"PC","status":"ready","highWatermark":12}"""))
+        server.enqueue(MockResponse().setBody("""{"events":[],"startCursor":12,"nextCursor":12,"highWatermark":12}"""))
+        client().probe(identity, "test-token")
+        val health = server.takeRequest(5, TimeUnit.SECONDS)!!
+        assertEquals("GET", health.method); assertEquals("/v1/health", health.path); assertNull(health.getHeader("Authorization"))
+        val authorized = server.takeRequest(5, TimeUnit.SECONDS)!!
+        assertEquals("GET", authorized.method); assertEquals("/v1/events?after=12&limit=1", authorized.path)
+        assertEquals("Bearer test-token", authorized.getHeader("Authorization")); assertEquals(2, server.requestCount)
+    }
+    @Test fun probeRejectsDifferentComputerBeforeSendingItsToken() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"protocolVersion":1,"serverId":"wrong","status":"ready","highWatermark":0}"""))
+        try { client().probe(identity, "test-token"); fail("wrong computer accepted") } catch (_: IdentityMismatch) { }
+        assertEquals(1, server.requestCount); assertNull(server.takeRequest(5, TimeUnit.SECONDS)!!.getHeader("Authorization"))
+    }
 }

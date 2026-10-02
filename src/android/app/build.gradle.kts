@@ -9,7 +9,27 @@ android {
     namespace = "com.notifforward.app"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
-    defaultConfig { applicationId = "com.notifforward.app"; minSdk = 26; targetSdk = 35; versionCode = 30000; versionName = "3.0.0" }
+    defaultConfig { applicationId = "com.notifforward.app"; minSdk = 26; targetSdk = 35; versionCode = 30101; versionName = "3.1.1" }
+    val releaseStore = System.getenv("WIN2MOBILE_ANDROID_KEYSTORE")
+    val releaseAlias = System.getenv("WIN2MOBILE_ANDROID_KEY_ALIAS")
+    val releaseStorePassword = System.getenv("WIN2MOBILE_ANDROID_STORE_PASSWORD")
+    val releaseKeyPassword = System.getenv("WIN2MOBILE_ANDROID_KEY_PASSWORD")
+    val releaseSigningAvailable = listOf(releaseStore, releaseAlias, releaseStorePassword, releaseKeyPassword).all { !it.isNullOrBlank() }
+    if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }) {
+        check(releaseSigningAvailable) { "Release requires a private signing key; use scripts/build_android.ps1 -Configuration release." }
+    }
+    if (releaseSigningAvailable) {
+        signingConfigs.create("release") {
+            storeFile = file(releaseStore!!)
+            storePassword = releaseStorePassword
+            keyAlias = releaseAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
+    buildTypes.getByName("release") {
+        isDebuggable = false
+        if (releaseSigningAvailable) signingConfig = signingConfigs.getByName("release")
+    }
     buildFeatures { compose = true }
     sourceSets.getByName("test").resources.srcDir("../../../tests/fixtures")
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

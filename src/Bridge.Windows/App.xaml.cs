@@ -19,6 +19,12 @@ public partial class App : Application
             catch { /* Activation details can be absent for a direct executable launch. */ }
         }
         base.OnStartup(e);
+        var preview = e.Args.FirstOrDefault(a => a.StartsWith("--design-preview=", StringComparison.Ordinal));
+        if (preview is not null)
+        {
+            var previewWindow = new MainWindow(false, preview["--design-preview=".Length..]) { ShowActivated = false, ShowInTaskbar = false, Left = -2000 };
+            MainWindow = previewWindow; previewWindow.Show(); return;
+        }
         // Local\ isolates the desktop agent to the current interactive logon session.
         _instance = new Mutex(true, "Local\\Win2Mobile.Desktop.v3", out bool created);
         if (!created)

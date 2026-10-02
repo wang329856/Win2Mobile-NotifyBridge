@@ -21,11 +21,12 @@ using Forms = System.Windows.Forms;
 
 namespace Win2Mobile.Windows;
 
-public sealed class AppFilter
+public sealed class AppFilter : ObservablePresentation
 {
     public required string AppId { get; init; }
     public required string Name { get; init; }
-    public bool Enabled { get; set; }
+    private bool _enabled;
+    public bool Enabled { get => _enabled; set => Set(ref _enabled, value); }
 }
 
 public partial class MainWindow : Window
@@ -48,32 +49,36 @@ public partial class MainWindow : Window
     private bool _exiting;
     private bool _initialized;
     private DateTimeOffset _qrExpires;
-    public MainWindow(bool startupLaunch)
+    public MainWindow(bool startupLaunch, string? previewDirectory = null)
     {
         InitializeComponent();
         _startupLaunch = startupLaunch;
+        _previewDirectory = previewDirectory;
         RecentList.ItemsSource = _recent;
         AppList.ItemsSource = _apps;
+        InitializePresentation();
     }
     private async void WindowLoaded(object sender, RoutedEventArgs e)
     {
         if (_initialized) return;
         _initialized = true;
+        if (_previewDirectory is not null) { await RenderDesignPreviewAsync(); return; }
         CreateTray();
         if (_startupLaunch) Hide();
         try
         {
             _settings = DesktopSettings.Load();
+            RestorePresentation();
             NtfyEnabledCheck.IsChecked = _settings.NtfyEnabled;
             NtfyServerText.Text = _settings.NtfyServerUrl;
             NtfyProxyText.Text = _settings.NtfyProxyUrl;
             DataPath.Text = "用户数据目录：" + DesktopSettings.DataDirectory;
             _store = new BridgeStore(Path.Combine(DesktopSettings.DataDirectory, "bridge.db"), Environment.MachineName, transientQueue: true);
-            foreach (var item in _store.GetEvents(Math.Max(0, _store.HighWatermark - 100), 100).Reverse()) _recent.Add(item);
+            foreach (var item in DesktopQueueReader.ReadRecent(_store.GetEvents, _store.HighWatermark).Reverse()) _recent.Add(item);
             foreach (var item in _recent) DiscoverApp(item.AppId, item.AppName);
             foreach (var id in _settings.BlockedAppIds) DiscoverApp(id, id);
             _capture = new NotificationCapture(Dispatcher) { Paused = _settings.Paused };
-            _capture.Status += status => CaptureStatus.Text = status;
+            _capture.Status += UpdateCaptureStatus;
             _capture.AppDiscovered += DiscoverApp;
             _capture.Notification += OnCaptured;
             UpdatePause();
@@ -107,7 +112,9 @@ public partial class MainWindow : Window
         menu.Items.Add("打开 Win2Mobile", null, (_, _) => Dispatcher.Invoke(ShowWindow));
         menu.Items.Add("暂停 / 恢复采集", null, (_, _) => Dispatcher.Invoke(TogglePause));
         menu.Items.Add("退出", null, async (_, _) => await Dispatcher.InvokeAsync(ExitAsync).Task.Unwrap());
-        _tray = new Forms.NotifyIcon { Text = "Win2Mobile · 局域网通知桥", Icon = System.Drawing.SystemIcons.Information, ContextMenuStrip = menu, Visible = true };
+        using var iconStream = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/Win2Mobile.ico")).Stream;
+        using var icon = new System.Drawing.Icon(iconStream, 32, 32);
+        _tray = new Forms.NotifyIcon { Text = "Win2Mobile", Icon = (System.Drawing.Icon)icon.Clone(), ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
     }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
@@ -134,7 +141,9 @@ public partial class MainWindow : Window
         {
             _certificate?.Dispose();
             _store?.Dispose();
+            _tray?.Icon?.Dispose();
             _tray?.Dispose();
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged -= SystemThemeChanged;
             System.Windows.Application.Current.Shutdown();
         }
     }
@@ -153,7 +162,7 @@ public partial class MainWindow : Window
             var stored = _store.Append(notification);
             if (stored is null) return true;
             _recent.Insert(0, stored);
-            while (_recent.Count > 100) _recent.RemoveAt(_recent.Count - 1);
+            while (_recent.Count > 1000) _recent.RemoveAt(_recent.Count - 1);
             ActionStatus.Text = $"已保存第 {stored.Sequence} 条通知：{stored.AppName}";
             return true;
         }
@@ -172,12 +181,13 @@ public partial class MainWindow : Window
     }
     private void FilterChanged(object sender, RoutedEventArgs e)
     {
-        if (_settings is null || sender is not CheckBox box || box.DataContext is not AppFilter app) return;
+        if (_settings is null || _filterBatch || sender is not CheckBox box || box.DataContext is not AppFilter app) return;
         if (box.IsChecked == true) _settings.BlockedAppIds.Remove(app.AppId); else _settings.BlockedAppIds.Add(app.AppId);
         SaveSettings();
     }
     private void SaveSettings()
     {
+        if (_previewDirectory is not null) return;
         try { _settings?.Save(); }
         catch (Exception ex) { ActionStatus.Text = "设置保存失败：" + ex.Message; }
     }
@@ -190,10 +200,14 @@ public partial class MainWindow : Window
         NtfyStatus.Text = "跨网络推送已开启；请在手机重新扫码配对以取得授权密钥。";
         _ntfyPublisher.Start();
     }
-    private async void NtfyApplyClick(object sender, RoutedEventArgs e)
+    private async void NtfyApplyClick(object sender, RoutedEventArgs e) => await ApplyNtfyAsync();
+    private async Task<bool> ApplyNtfyAsync()
     {
-        if (_settings is null || _ntfyRegistry is null) return;
+        if (_settings is null || _ntfyRegistry is null || _ntfyApplying) return false;
+        _ntfyApplying = true;
+        bool success = false;
         NtfyApplyButton.IsEnabled = false;
+        NtfyEnabledCheck.IsEnabled = false;
         var previousEnabled = _settings.NtfyEnabled; var previousUrl = _settings.NtfyServerUrl;
         var previousProxy = _settings.NtfyProxyUrl;
         try
@@ -207,6 +221,7 @@ public partial class MainWindow : Window
             _settings.NtfyProxyUrl = proxy;
             _settings.Save();
             StartNtfy();
+            success = true;
         }
         catch (Exception ex)
         {
@@ -218,14 +233,16 @@ public partial class MainWindow : Window
             NtfyProxyText.Text = previousProxy;
             ActionStatus.Text = "跨网络设置未应用：" + ex.Message;
         }
-        finally { NtfyApplyButton.IsEnabled = true; }
+        finally { NtfyApplyButton.IsEnabled = true; NtfyEnabledCheck.IsEnabled = true; _ntfyApplying = false; }
+        return success;
     }
     private async void RemotePairClick(object sender, RoutedEventArgs e)
     {
-        if (_host is null || _settings?.NtfyEnabled != true) { RemotePairStatus.Text = "请先启用并应用跨网络设置。"; return; }
+        if (_host is null || _settings is null || !RemotePairButton.IsEnabled) { RemotePairStatus.Text = "连接服务尚未就绪。"; return; }
         RemotePairButton.IsEnabled = false;
         try
         {
+            if (!_settings.NtfyEnabled) { NtfyEnabledCheck.IsChecked = true; if (!await ApplyNtfyAsync()) return; }
             var old = _remotePairing; _remotePairing = null; _remotePayload = null; RemotePairQr.Source = null;
             if (old is not null) await old.DisposeAsync();
             _remotePairing = new NtfyRemotePairing(_host, Addresses.SelectedItem as string ?? "127.0.0.1", _settings.NtfyServerUrl, proxyUrl: _settings.NtfyProxyUrl);
@@ -240,6 +257,7 @@ public partial class MainWindow : Window
             PairingQr.Source = null; QrStatus.Text = "已生成远程二维码；局域网扫码请重新刷新局域网二维码。";
             RemotePairStatus.Text = "远程二维码已生成，120 秒内扫描或粘贴；手机和电脑必须核对同样的六位校验码后批准。";
             current.Start();
+            RemotePairButton.Content = "刷新远程二维码";
         }
         catch (Exception) { RemotePairStatus.Text = "远程二维码生成失败，请检查设置后重新生成。"; _remotePayload = null; RemotePairQr.Source = null; }
         finally { RemotePairButton.IsEnabled = true; }
@@ -267,6 +285,7 @@ public partial class MainWindow : Window
     private void UpdatePause()
     {
         PauseButton.Content = _settings?.Paused == true ? "恢复采集" : "暂停采集";
+        _presentation.CaptureHeading = !NotificationCapture.HasPackageIdentity ? "便携运行，随时连接手机" : _settings?.Paused == true ? "采集已暂停，随时继续" : _capture?.HasAccess == true ? "正在连接你关心的消息" : "先授权，再开始同步";
         ActionStatus.Text = _settings?.Paused == true ? "采集已暂停；暂停期间的新通知不会补发。" : "采集已恢复；通知权限状态见上方。";
     }
     private void PrivacyClick(object sender, RoutedEventArgs e) => Open("ms-settings:privacy-notifications");
@@ -335,21 +354,26 @@ public partial class MainWindow : Window
             string? remotePendingId = (RemotePendingList.SelectedItem as PendingPairing)?.RequestId;
             string? deviceId = (DeviceList.SelectedItem as PairedDevice)?.DeviceId;
             var pending = _host.Pairing.PendingRequests.ToArray();
+            PairComputerName.Text = _store.Identity.ServerName;
+            RemoteQrCountdown.Text = _remotePayload is not null && _remotePairing is not null ? $"二维码有效期还剩 {(int)Math.Max(0, (_remotePairing.ExpiresAt - DateTimeOffset.UtcNow).TotalSeconds)} 秒" : "";
             var devices = _store.GetDevices();
+            UpdateOverview(pending.Length, devices.Count);
             PendingList.ItemsSource = pending;
             PendingList.SelectedItem = pending.FirstOrDefault(x => x.RequestId == pendingId);
             var remotePending = pending.Where(x => x.VerificationCode is not null).ToArray();
             RemotePendingList.ItemsSource = remotePending;
             RemotePendingList.SelectedItem = remotePending.FirstOrDefault(x => x.RequestId == remotePendingId);
-            RemotePendingHint.Text = remotePending.Length > 0 ? "已收到请求，请核对下面的六位码与手机显示是否一致。" : "暂无待批准请求。手机应显示“请求已发送”；若仍在连接或重试，请先检查两端网络。";
+            RemotePendingHint.Text = pending.Length > 0 ? "已收到请求。远程配对请核对手机显示的六位码，再批准。" : "等待手机扫码。手机请求成功后会显示在这里。";
             DeviceList.ItemsSource = devices;
             DeviceList.SelectedItem = devices.FirstOrDefault(x => x.DeviceId == deviceId);
             if (PairingQr.Source is not null)
             {
                 int remaining = (int)Math.Max(0, (_qrExpires - DateTimeOffset.UtcNow).TotalSeconds);
                 QrStatus.Text = remaining > 0 ? $"二维码有效期还剩 {remaining} 秒" : "二维码已过期，请点击刷新。";
-                if (remaining == 0) PairingQr.Source = null;
+                if (remaining == 0) { PairingQr.Source = null; if (PairPanel.Visibility == Visibility.Visible && !_remoteMode && pending.Length == 0) RefreshPairing(); }
             }
+            if (PairPanel.Visibility == Visibility.Visible && _remoteMode && _remotePayload is null && _remotePairing is not null && DateTimeOffset.UtcNow >= _remotePairing.ExpiresAt && pending.Length == 0 && RemotePairButton.IsEnabled) RemotePairClick(RemotePairButton, new RoutedEventArgs());
+            if (PairPanel.Visibility == Visibility.Visible && !_remoteMode && PairingQr.Source is null && _qrExpires <= DateTimeOffset.UtcNow && pending.Length == 0) RefreshPairing();
         }
         catch (Exception ex) { ActionStatus.Text = "设备状态刷新失败：" + ex.Message; }
     }

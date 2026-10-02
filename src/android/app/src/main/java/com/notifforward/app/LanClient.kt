@@ -6,6 +6,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -57,7 +58,7 @@ class LanClient(baseUrl: String, fingerprint: String, network: Network? = null) 
             override fun onResponse(call: Call, response: Response) {
                 val result = runCatching { response.use {
                     if (it.code == 401 || it.code == 403) throw AuthorizationRequired()
-                    check(it.isSuccessful) { "电脑返回错误 ${it.code}" }
+                    if (!it.isSuccessful) throw java.io.IOException("电脑返回错误 ${it.code}")
                     it.body?.string() ?: error("电脑返回空响应")
                 } }
                 if (continuation.isActive) result.fold({ continuation.resume(it) }, { continuation.resumeWithException(it) })
@@ -83,6 +84,12 @@ class LanClient(baseUrl: String, fingerprint: String, network: Network? = null) 
         }
         error("配对已过期，请重新扫描电脑二维码")
     }
+    override suspend fun probe(serverId: String, token: String) {
+        val health = wireJson.decodeFromString<LanHealth>(request("/v1/health"))
+        if (health.serverId != serverId || health.protocolVersion != 1 || health.status != "ready" || health.highWatermark < 0) throw IdentityMismatch()
+        // Authenticated GET is read-only. Do not save events, align cursors or ACK the probe.
+        request("/v1/events?after=" + health.highWatermark + "&limit=1", token = token)
+    }
     override fun stream(cursor: Long, token: String, listener: WebSocketListener, liveOnly: Boolean): WebSocket = http.newWebSocket(
         Request.Builder().url(base.replaceFirst("https://", "wss://") + "/v1/events/stream?after=$cursor" + if (liveOnly) "&live=true" else "")
             .header("Authorization", "Bearer $token").build(), listener)
@@ -92,3 +99,4 @@ class LanClient(baseUrl: String, fingerprint: String, network: Network? = null) 
     }
     override fun close() { http.dispatcher.cancelAll(); http.connectionPool.evictAll(); http.dispatcher.executorService.shutdown() }
 }
+@Serializable private data class LanHealth(val protocolVersion: Int, val serverId: String, val status: String, val highWatermark: Long)

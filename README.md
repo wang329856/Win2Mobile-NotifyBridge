@@ -1,18 +1,20 @@
-# Win2Mobile NotifyBridge
+# Win2Mobile
 
-将 Windows 系统通知转发到已授权的 Android 手机。v3 使用 C# 桌面程序和 Kotlin Android App，支持局域网直连，以及可选的 ntfy 跨网络端到端加密中转，无需租用服务器。跨网络功能为当前源码新增，下面链接的原预发布安装包尚不包含此功能。
+将 Windows 系统通知转发到已授权的 Android 手机。使用 C# 桌面程序和 Kotlin Android App，支持局域网直连，以及可选的 ntfy 跨网络端到端加密中转，无需租用服务器。
 
-当前代码为 v3 重构版本，桌面端与 Android 端已完成本机安装和测试。旧版源码、构建缓存与过时入口已清理；旧实现可从 Git 历史提交 `253534b` 恢复。构建与验证记录见 [开发记录](docs/development-progress.md)。当前安装包仍使用开发签名，正式发布签名尚未配置。
+当前源码为 3.1.1，提供两端新版界面、统一品牌图标、竖屏扫码、通知栏应用来源、手机暂停／继续、滑动删除撤销及可信局域网优先的自动连接。改版截图与验证范围见 [UI 改版验收记录](docs/ui-redesign-2026-10-02.md)，正式构建及签名说明见 [3.1.1 打包记录](docs/releases/v3.1.1.md)。旧实现可从 Git 历史提交 `253534b` 恢复。Android 已配置独立 release 签名；Windows 沿用现有本地签名证书，首次在其他电脑安装需自行核验并信任证书。
+
+Windows 仅提供具有系统通知采集权限的安装版，显示名称统一为 `Win2Mobile`。安装套件自带 .NET 运行时，无需另行安装 .NET。
 
 ## 下载安装
 
-[v3.0.0 预发布版](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/tag/v3.0.0-preview.1) 提供 [Windows x64 安装套件](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.0.0-preview.1/Win2Mobile-3.0.0-windows-x64.zip) 和 [Android APK](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.0.0-preview.1/Win2Mobile-3.0.0-debug.apk)。桌面套件附公钥证书和安装说明；首次安装需信任开发证书。完整安装、升级与已知限制见 [发布说明](docs/releases/v3.0.0-preview.1.md)。
+[v3.1.1 正式版](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/tag/v3.1.1) 提供 [Windows 安装套件](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.1/Win2Mobile-Setup-x64.zip)、[Windows MSIX](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.1/Win2Mobile-Setup-x64.msix) 和 [Android 正式 APK](https://github.com/wang329856/Win2Mobile-NotifyBridge/releases/download/v3.1.1/Win2Mobile-3.1.1-release.apk)。Windows 套件附公钥证书和安装说明，新电脑须核验并信任现有自签名证书。Android 正式签名无法覆盖旧 debug APK，卸载前应保留所需旧数据。完整安装、升级与验证范围见 [发布说明](docs/releases/v3.1.1.md)。
 
 ## 使用流程
 
 1. 在 Windows 安装带应用包身份的 Win2Mobile MSIX，从开始菜单启动。
 2. 点击“授权通知访问”，允许系统通知监听。
-3. 在 Android 安装 Win2Mobile，允许通知，在“电脑”页选择“扫码连接电脑”并扫描电脑显示的二维码。
+3. 在 Android 安装 Win2Mobile，在通知首页点击“扫码连接电脑”，扫描桌面“连接手机”面板的二维码。
 4. 在电脑核对设备名称，批准手机配对请求。
 5. 在电脑点击“发送测试通知”，确认手机收到，再使用正常的系统通知转发。
 
@@ -20,17 +22,17 @@
 
 电脑窗口提供权限状态、暂停、配对批准/拒绝、设备撤销、短期发送队列、来源过滤与登录启动。手机提供本次接收消息列表、设备管理与后台状态诊断。
 
-手机点击“开始本次接收”会清空旧列表，首次连接只接收之后的新通知；同一会话内断网重连、切换局域网/远程保留已收到的消息并补收断网期间的新消息。删除单条或清空列表会保留去重标记，补发不会恢复已删除的消息。没有已授权手机时电脑不采集入库，不向新设备传递授权前记录；临时发送队列最多保留 24 小时、1000 条，超期或超量自动清理，不提供长期归档。更新记录见 [接收会话与删除修复](docs/receive-session-update-2026-10-01.md)。
+手机首页一次点击即可暂停或继续：保留本次消息、凭据与进度，恢复后补收仍在电脑队列中的通知。只有明确确认“开始新一轮接收”才清空列表并重建基线，首次连接只接收之后的新通知。新增电脑只初始化它自身，其他电脑的消息保留。滑动删除可短时撤销；清空、新会话或移除电脑后，旧撤销操作失效。删除标记与接收进度防止重连后已删内容重新出现。没有已授权手机时电脑不采集入库，不向新设备传递授权前记录；短期发送队列最多保留 24 小时、1000 条，不提供长期归档。
 
 ## 跨网络推送与完全远程配对
 
-1. 使用当前源码构建并更新两端，在电脑“跨网络推送”页启用 ntfy，应用默认 `https://ntfy.sh`。
+1. 使用当前源码构建并更新两端，在电脑“设置”的“跨网络推送”中启用 ntfy，应用默认 `https://ntfy.sh`。
    若电脑直连中转失败，可在同页填写已有 HTTP 代理地址（例如本机代理 `http://127.0.0.1:7890`），只影响本应用。两端都需实际能访问所选中转服务。
-2. 点击“生成远程配对二维码”。通过可信渠道将二维码或复制的配对信息交给自己的手机，在 120 秒内扫码或粘贴；两端只需分别能访问互联网，无需在同一局域网。
-3. 核对手机显示的六位校验码与电脑“跨网络推送”页二维码旁的校验码字段，在同页批准请求；“配对手机”页也可查看待批准请求。
+2. 打开“连接手机”，选择“跨网络连接”，点击“启用跨网络并生成二维码”。通过可信渠道将二维码或复制的配对信息交给自己的手机，在 120 秒内扫码或粘贴。
+3. 核对两端六位校验码，在电脑请求卡片直接点击批准；任意桌面页面都会显示待批准提醒。
 4. 手机切换移动数据，电脑发送测试通知；也可继续使用普通局域网二维码配对，开启中转后重新扫码即可领取通知密钥。
 
-远程与局域网接收共用同一授权，但使用不同连接地址。首次远程配对保存的局域网 IP 可能是虚拟网卡地址或已变更；回到同一局域网后，在手机“电脑”卡片点“更新局域网地址”，填写电脑“配对手机”页当前显示的 HTTPS 地址，然后切换局域网接收。此操作保留原证书校验、授权、远程密钥和本次消息，无需重新配对。电脑扫描地址时优先列出实际网卡，已有手动选择仍会保留。
+每台电脑默认“自动”：有 Wi-Fi／以太网时最多用 3 秒检查已保存的可信地址，不可达则使用已有中转授权。中转稳定至少 30 秒且两次局域网检查成功后自动切回；可在电脑卡片详情选择“仅局域网”或“仅跨网络”。授权拒绝、证书与身份异常会明确停止该电脑的接收，要求核验。地址变化时可扫码更新或手动编辑，保留授权、密钥、消息与进度；扫码必须匹配原电脑身份和证书。
 
 每部手机使用独立 topic 和 AES-256-GCM 密钥。通知内容在电脑加密、手机解密；远程授权回复通过临时 ECDH 密钥单独加密。免费公共中转可见 IP、topic、大小和时间，但不持有通知密钥。电脑开关默认关闭。无需安装 ntfy App、开放公网端口或另租服务器。
 
@@ -70,7 +72,9 @@ Android 接收使用原生前台服务并显示持续状态通知。Doze 和手�
     cd src/android
     ./gradlew.bat testDebugUnitTest lintDebug assembleDebug
 
-Android Studio 直接打开 src/android。本机路径通过未跟踪的 local.properties 或 ANDROID_HOME 配置。debug APK 用于开发验证；稳定发布需提供固定 release 签名，私钥与凭据不进入仓库。
+Android Studio 直接打开 src/android。本机路径通过未跟踪的 local.properties 或 ANDROID_HOME 配置。debug APK 用于开发验证；release APK 使用固定的独立发布密钥，私钥与凭据不进入仓库。
+
+首次在自己的发布环境创建密钥：`./scripts/New-AndroidSigningKey.ps1`，已有密钥不会被替换。正式构建：`./scripts/build_android.ps1 -Configuration release`。默认从 `%LOCALAPPDATA%/Win2Mobile/Signing/android-release.signing.json` 加载当前用户 DPAPI 保护的配置，也可指定 `-SigningConfiguration`。后续升级必须保留并复用同一发布密钥；调试签名和正式签名不能相互覆盖。
 
 ### 从旧版迁移
 

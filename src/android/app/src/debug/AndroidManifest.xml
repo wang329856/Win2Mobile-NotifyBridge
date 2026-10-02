@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application>
+ <activity android:name=".DesignPreviewActivity" android:exported="true" android:label="Win2Mobile 设计预览" />
+ <activity android:name=".MigrationVerificationActivity" android:exported="true" android:label="Win2Mobile 迁移验收" />
+</application></manifest>

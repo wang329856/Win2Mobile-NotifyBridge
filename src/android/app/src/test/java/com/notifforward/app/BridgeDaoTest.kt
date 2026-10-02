@@ -138,6 +138,27 @@ class BridgeDaoTest {
         assertEquals(listOf(second), dao.events.map { it.eventId })
         assertFalse(dao.accept(server, fresh))
     }
+    @Test fun undoRestoresDeletionMarkerWithoutRewindingEitherCursor() = runBlocking {
+        val dao = dao()
+        dao.accept(server, event(1))
+        val ticket = dao.deleteWithUndo(dao.events.single())!!
+        assertTrue(dao.events.isEmpty())
+        assertEquals(1, dao.dismissed(server, first))
+        assertTrue(dao.restoreNotification(ticket))
+        assertEquals(0, dao.dismissed(server, first))
+        assertEquals(1L, dao.pc.cursor)
+        assertFalse(dao.accept(server, event(1)))
+        assertEquals(1, dao.events.size)
+    }
+    @Test fun clearNewSessionAndRepairInvalidatePendingUndo() = runBlocking {
+        for (action in listOf<suspend (FakeDao) -> Unit>({ it.clearHistory() }, { it.beginSession() }, { it.savePairing(it.pc) })) {
+            val dao = dao(); dao.accept(server, event(1))
+            val ticket = dao.deleteWithUndo(dao.events.single())!!
+            action(dao)
+            assertFalse(dao.restoreNotification(ticket))
+            assertTrue(dao.events.isEmpty())
+        }
+    }
     private class FakeDao(var pc: Computer) : BridgeDao() {
         val events = mutableListOf<SavedNotification>()
         val deleted = mutableSetOf<DismissedNotification>()
@@ -169,6 +190,8 @@ class BridgeDaoTest {
         override suspend fun dismissed(id: String, eventId: String) = if (DismissedNotification(id, eventId) in deleted) 1 else 0
         override suspend fun deleteEvent(id: String, eventId: String) { events.removeAll { it.serverId == id && it.eventId == eventId } }
         override suspend fun deleteDismissals(id: String) { deleted.removeAll { it.serverId == id } }
+        override suspend fun undismiss(id: String, eventId: String) { deleted.remove(DismissedNotification(id, eventId)) }
+        override suspend fun connectionMode(id: String, mode: String) { pc = pc.copy(connectionMode = mode) }
         override suspend fun deleteHistory(id: String) { events.removeAll { it.serverId == id } }
         override suspend fun deleteComputer(id: String) { }
         override suspend fun remote(id: String, remote: Boolean) { pc = pc.copy(remoteEnabled = remote) }

@@ -14,7 +14,8 @@ data class Computer(@PrimaryKey val serverId: String, val serverName: String, va
     @ColumnInfo(defaultValue = "0") val relayGapUntil: Long = 0,
     @ColumnInfo(defaultValue = "''") val sessionStartedAt: String = "",
     @ColumnInfo(defaultValue = "1") val sessionPending: Boolean = true,
-    @ColumnInfo(defaultValue = "0") val hiddenThrough: Long = 0)
+    @ColumnInfo(defaultValue = "0") val hiddenThrough: Long = 0,
+    @ColumnInfo(defaultValue = "'AUTO'") val connectionMode: String = "AUTO")
 @Entity(tableName = "notifications", primaryKeys = ["serverId", "eventId"],
     indices = [Index(value = ["serverId", "sequence"], unique = true)])
 data class SavedNotification(val serverId: String, val eventId: String, val sequence: Long, val appId: String,
@@ -24,6 +25,7 @@ data class SavedNotification(val serverId: String, val eventId: String, val sequ
 data class DismissedNotification(val serverId: String, val eventId: String)
 
 data class AppOption(val appId: String, val appName: String)
+data class DeletedNotification(val item: SavedNotification, val sessionStartedAt: String, val hiddenThrough: Long)
 
 @Dao abstract class BridgeDao {
     @Query("SELECT * FROM computers ORDER BY serverName") abstract fun observeComputers(): Flow<List<Computer>>
@@ -50,7 +52,24 @@ data class AppOption(val appId: String, val appName: String)
     @Query("SELECT COUNT(*) FROM dismissed_notifications WHERE serverId=:id AND eventId=:eventId") abstract suspend fun dismissed(id: String, eventId: String): Int
     @Query("DELETE FROM notifications WHERE serverId=:id AND eventId=:eventId") abstract suspend fun deleteEvent(id: String, eventId: String)
     @Query("DELETE FROM dismissed_notifications WHERE serverId=:id") abstract suspend fun deleteDismissals(id: String)
+    @Query("DELETE FROM dismissed_notifications WHERE serverId=:id AND eventId=:eventId") abstract suspend fun undismiss(id: String, eventId: String)
+    @Query("UPDATE computers SET connectionMode=:mode WHERE serverId=:id") abstract suspend fun connectionMode(id: String, mode: String)
     @Transaction open suspend fun deleteNotification(id: String, eventId: String) { dismiss(DismissedNotification(id, eventId)); deleteEvent(id, eventId) }
+    @Transaction open suspend fun deleteWithUndo(item: SavedNotification): DeletedNotification? {
+        val current = computer(item.serverId) ?: return null
+        if (savedEvent(item.serverId, item.eventId) != item) return null
+        deleteNotification(item.serverId, item.eventId)
+        return DeletedNotification(item, current.sessionStartedAt, current.hiddenThrough)
+    }
+    @Transaction open suspend fun restoreNotification(ticket: DeletedNotification): Boolean {
+        val item = ticket.item
+        val current = computer(item.serverId) ?: return false
+        if (current.sessionStartedAt != ticket.sessionStartedAt || current.hiddenThrough != ticket.hiddenThrough ||
+            current.hiddenThrough >= item.sequence || dismissed(item.serverId, item.eventId) == 0) return false
+        val inserted = insert(item) != -1L
+        if (inserted || savedEvent(item.serverId, item.eventId) == item) undismiss(item.serverId, item.eventId)
+        return inserted
+    }
     @Transaction open suspend fun clearHistory() {
         computers().forEach { hideReceived(it.serverId); deleteDismissals(it.serverId) }
         deleteAllHistory()
@@ -145,5 +164,10 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
         db.execSQL("CREATE TABLE IF NOT EXISTS dismissed_notifications (serverId TEXT NOT NULL,eventId TEXT NOT NULL,PRIMARY KEY(serverId,eventId))")
     }
 }
-@Database(entities = [Computer::class, SavedNotification::class, DismissedNotification::class], version = 3, exportSchema = false)
+val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE computers ADD COLUMN connectionMode TEXT NOT NULL DEFAULT 'AUTO'")
+    }
+}
+@Database(entities = [Computer::class, SavedNotification::class, DismissedNotification::class], version = 4, exportSchema = false)
 abstract class BridgeDatabase : RoomDatabase() { abstract fun dao(): BridgeDao }
