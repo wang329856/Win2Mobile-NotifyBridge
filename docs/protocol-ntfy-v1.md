@@ -46,6 +46,6 @@ PublishedSequence 表示中转接收，不表示手机保存。“中转已连�
 
 ## 限制与验证
 
-2026-10-01 核对 [官方发布 API](https://docs.ntfy.sh/publish/)：单条 4096 bytes、ntfy.sh 默认免费每日 250 条、默认缓存 12 小时；每手机、每分片和重试均占用额度。实际规则未来可变。订阅与恢复见 [官方订阅 API](https://docs.ntfy.sh/subscribe/api/)。自定义服务支持 HTTPS 根地址与匿名 topic，不配置服务器账号/token。
+本项目按单片不超过 4096 bytes 构造发布请求。ntfy.sh 的额度和缓存时长以 [官方发布 API](https://docs.ntfy.sh/publish/#limitations) 现行规则为准；每手机、每分片和重试均占用额度。订阅与恢复见 [官方订阅 API](https://docs.ntfy.sh/subscribe/api/)。自定义服务支持 HTTPS 根地址与匿名 topic，不配置服务器账号/token。
 
-`tests/fixtures/ntfy-v1.json` 和 `ntfy-pair-v1.json` 是公开虚构数据和测试密钥，验证 C#→Kotlin 加密/ECDH/SAS 互通，绝不能用于真实授权。实机验收见 [清单](ntfy-device-validation.md)。
+`tests/fixtures/ntfy-v1.json` 和 `ntfy-pair-v1.json` 是公开虚构数据和测试密钥，验证 C#→Kotlin 加密/ECDH/SAS 互通，绝不能用于真实授权。使用与自建服务要求见 [跨网教程](relay.md)。

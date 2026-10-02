@@ -2,10 +2,10 @@ blank_issues_enabled: false
 contact_links:
   - name: 安装与常见问题
     url: https://github.com/wang329856/Win2Mobile-NotifyBridge/blob/master/docs/installation.md
-    about: 先查看证书、权限、签名冲突与连接问题
+    about: 查看首次安装、通知权限与扫码连接方法
   - name: 跨网与自建服务
     url: https://github.com/wang329856/Win2Mobile-NotifyBridge/blob/master/docs/relay.md
     about: 了解 ntfy.sh 依赖、限额和自定义中转条件
   - name: 隐私与安全反馈
-    url: https://github.com/wang329856/Win2Mobile-NotifyBridge/blob/master/CONTRIBUTING.md#安全问题
+    url: https://github.com/wang329856/Win2Mobile-NotifyBridge/blob/master/PRIVACY.md#安全反馈
     about: 查看隐私边界与安全问题反馈方式，不公开敏感材料

@@ -7,7 +7,7 @@ body:
       value: |
         请先查看 [安装与常见问题](https://github.com/wang329856/Win2Mobile-NotifyBridge/blob/master/docs/installation.md) 和已有 Issue。
         请用虚构通知复现。不要上传二维码、配对码、topic、token、密钥、完整数据库或未脱敏的通知内容。
-        安全漏洞优先按贡献指南中的安全反馈方式处理，不在公开 Issue 披露可利用细节。
+        安全漏洞优先按隐私说明中的安全反馈方式处理，不在公开 Issue 披露可利用细节。
   - type: input
     id: windows-version
     attributes:

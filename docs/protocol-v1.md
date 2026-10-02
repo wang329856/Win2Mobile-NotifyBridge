@@ -1,6 +1,6 @@
 # 局域网协议 v1（实现约束）
 
-所有 JSON 使用 camelCase。默认端口 47721；服务使用 HTTPS/WSS。认证凭据只放入 Authorization: Bearer 请求头，禁止 URL token。时间为 UTC ISO 8601。Android minSdk 26、targetSdk 35、compileSdk 36。Windows .NET 10、系统目标 Windows 10 build 19041+。Android applicationId 保持 com.notifforward.app，versionCode 30000、versionName 3.0.0。
+所有 JSON 使用 camelCase。默认端口 47721；服务使用 HTTPS/WSS。认证凭据只放入 Authorization: Bearer 请求头，禁止 URL token。时间为 UTC ISO 8601。Android minSdk 26、targetSdk 35、compileSdk 36。Windows .NET 10、系统目标 Windows 10 build 19041+。Android applicationId 为 com.notifforward.app；应用版本以当前构建配置为准。
 
 ## 二维码
 

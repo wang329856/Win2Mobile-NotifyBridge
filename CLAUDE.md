@@ -1,6 +1,6 @@
 # Repository development guide
 
-Win2Mobile NotifyBridge forwards Windows Toast notifications to an authorized Android phone over a LAN or an optional end-to-end encrypted ntfy relay, including remote first pairing. The current implementation is C#/.NET 10 WPF on Windows and Kotlin/Compose on Android. Legacy Flutter, ntfy polling, UI Automation capture and sparse-package scripts have been removed; the old implementation is available in Git history at `253534b`.
+Win2Mobile NotifyBridge forwards Windows Toast notifications to an authorized Android phone over a LAN or an optional end-to-end encrypted ntfy relay, including remote first pairing. The current implementation is C#/.NET 10 WPF on Windows and Kotlin/Compose on Android.
 
 ## Build and verify
 
@@ -17,7 +17,7 @@ Run from the repository root in PowerShell:
 ./scripts/build_android.ps1
 ```
 
-Android requires JDK 21 and Android SDK platform 36 / build-tools 36.0.0. Android Studio opens `src/android`. The Gradle verification tasks are `testDebugUnitTest lintDebug assembleDebug`. The two .NET console test runners must be invoked through their scripts; `dotnet test` does not execute them.
+Android requires JDK 21 and Android SDK platform 36 / build-tools 36.0.0. Android Studio opens `src/android`. The Gradle verification tasks are `testDebugUnitTest lintDebug assembleDebug`. The three .NET console test runners must be invoked through their scripts; `dotnet test` does not execute them.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Android requires JDK 21 and Android SDK platform 36 / build-tools 36.0.0. Androi
 - `tests`: backend integration and desktop capture-state runners.
 - `packaging/windows`: full MSIX manifest, assets and installer. Installation chooses the system Appx volume without changing the machine's default volume.
 
-The protocol is specified in `docs/protocol-v1.md`; actual device validation is recorded in `docs/device-validation.md`. Loopback tests do not establish LAN or Doze reliability. Windows establishes a baseline at startup and on resume; notifications from a paused interval are not replayed.
+The protocols are specified in `docs/protocol-v1.md` and `docs/protocol-ntfy-v1.md`. User instructions for the current release are in `README.md`, `docs/installation.md` and `docs/relay.md`. Loopback tests do not establish LAN or Doze reliability. Windows establishes a baseline at startup and on resume; notifications from a paused interval are not replayed.
 
 ## Local state and signing
 
