@@ -4,6 +4,7 @@ param(
     [string]$OutputDirectory,
     [string]$MakeAppxPath,
     [string]$SignToolPath,
+    [uri]$TimestampServer = 'http://timestamp.digicert.com',
     [string]$Publisher = 'CN=Win2Mobile',
     [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '3.1.1.1',
     [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$SigningCertificateThumbprint
@@ -12,6 +13,9 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $PublishDirectory) { $PublishDirectory = Join-Path $repoRoot 'src/Bridge.Windows/bin/publish/win-x64' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'packaging/windows/output' }
+if ($SigningCertificateThumbprint -and (-not $TimestampServer.IsAbsoluteUri -or $TimestampServer.Scheme -notin @('http', 'https'))) {
+    throw '签名必须配置有效的 RFC 3161 时间戳服务器地址。'
+}
 if (-not (Test-Path -LiteralPath (Join-Path $PublishDirectory 'Win2Mobile.exe'))) { throw '请先运行 scripts/build_windows.ps1 生成 Windows 自包含发布文件。' }
 $PublishDirectory = (Resolve-Path -LiteralPath $PublishDirectory).Path.TrimEnd([char[]]@('\', '/'))
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd([char[]]@('\', '/'))
@@ -59,11 +63,13 @@ if ($SigningCertificateThumbprint) {
     if (-not $certificate.HasPrivateKey) { throw '签名证书缺少私钥。' }
     if ($certificate.Subject -ne $Publisher) { throw '签名证书 Subject 必须与 MSIX Publisher 完全一致。' }
     $signTool = Find-SdkTool 'SignTool.exe' $SignToolPath
-    & $signTool sign /fd SHA256 /sha1 $SigningCertificateThumbprint /s My $package
+    & $signTool sign /fd SHA256 /sha1 $SigningCertificateThumbprint /s My /tr $TimestampServer.AbsoluteUri /td SHA256 $package
     if ($LASTEXITCODE -ne 0) { throw "MSIX 签名失败，退出码 $LASTEXITCODE" }
-    & $signTool verify /pa /v $package
+    & $signTool verify /pa /v /tw $package
     if ($LASTEXITCODE -ne 0) { throw 'MSIX 已执行签名，但签名信任验证失败。请核对证书有效期、用途与信任链；脚本不会导入或信任证书。' }
-    Write-Output "已打包、签名并通过当前机器信任验证：$package"
+    $signature = Get-AuthenticodeSignature -LiteralPath $package
+    if ($signature.Status -ne 'Valid' -or $null -eq $signature.TimeStamperCertificate) { throw '安装包必须同时具有有效签名和可信时间戳；不会将缺少时间戳的包作为签名成功交付。' }
+    Write-Output "已打包、签名、加入可信时间戳并通过当前机器信任验证：$package"
 } else {
     Write-Output "已生成未签名 MSIX：$package"
     Write-Output '尚未签名，不能宣称可安装。使用匹配 Publisher 的代码签名证书，通过 -SigningCertificateThumbprint 重新打包签名。'
